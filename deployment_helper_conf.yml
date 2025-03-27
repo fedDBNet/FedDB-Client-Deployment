@@ -28,7 +28,7 @@ local:
   # IMPORTANT: The frontend will send requests to other services always via it's own address
   # this means that if nginx is not used, the frontend will not be able to reach any service
   use-internal-nginx:
-    nginx-external-port: 8005
+    nginx-external-port: 80
       # must be given!
 
   keycloak-address: https://staging.featurecloud.ai/feddb/local-auth
@@ -42,5 +42,5 @@ local:
     # the global deployments nginx configuration
   frontend-image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-microbaiome
     # the frontend image to use
-  # image-tag: latest
+  image-tag: latest
     # the tag to use, is applied to ALL services with custom images
