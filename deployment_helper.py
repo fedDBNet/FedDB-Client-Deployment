@@ -458,4 +458,4 @@ if __name__ == '__main__':
     print(f'The deployment folder {foldername} was created successfully.')
     print(f"Simply run the following commands to deploy the fedDB project:\n")
     print(f"cd {foldername}")
-    print("docker-compose --env-file=deployment.env up -d")
+    print("docker compose --env-file=deployment.env up -d")
