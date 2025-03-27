@@ -116,6 +116,8 @@ def platform_map_conf_to_env_placeholders(conf: Dict[Any, Any],
     env_mapping['FEDDB_PLATFORM_GLOBAL_LEARNING_INTERNAL_PORT'] = global_learning_internal_port
     placeholder_mapping["$$FEDDB_PLATFORM_GLOBAL_LEARNING_EXPOSED_ADDRESS_FOR_OTHER_SERVICES$$"] = \
         f"global-learning-management-api:{global_learning_internal_port}"
+    env_mapping['FEDDB_PLATFORM_GLOBAL_LEARNING_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = \
+        f"global-learning-management-api:{global_learning_internal_port}"
     ## global learning db
     global_learning_db_internal_port = 3306
     env_mapping['FEDDB_PLATFORM_GLOBAL_LEARNING_DB_INTERNAL_PORT'] = global_learning_db_internal_port
@@ -123,6 +125,8 @@ def platform_map_conf_to_env_placeholders(conf: Dict[Any, Any],
     global_datamodeler_internal_port = 8000
     env_mapping['FEDDB_PLATFORM_GLOBAL_DATAMODELER_INTERNAL_PORT'] = global_datamodeler_internal_port
     placeholder_mapping["$$FEDDB_PLATFORM_GLOBAL_DATAMODELER_EXPOSED_ADDRESS_FOR_OTHER_SERVICES$$"] = \
+        f"global-datamodeler-api:{global_datamodeler_internal_port}"
+    env_mapping['FEDDB_PLATFORM_GLOBAL_DATAMODELER_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = \
         f"global-datamodeler-api:{global_datamodeler_internal_port}"
     ## global datamodeler db
     global_datamodeler_db_internal_port_http = 7474
@@ -134,6 +138,8 @@ def platform_map_conf_to_env_placeholders(conf: Dict[Any, Any],
     global_frontend_internal_port = 80
     env_mapping['FEDDB_PLATFORM_GLOBAL_FRONTEND_INTERNAL_PORT'] = global_frontend_internal_port
     placeholder_mapping["$$FEDDB_PLATFORM_GLOBAL_FRONTEND_EXPOSED_ADDRESS_FOR_OTHER_SERVICES$$"] = \
+        f"global-frontend:{global_frontend_internal_port}"
+    env_mapping['FEDDB_PLATFORM_GLOBAL_FRONTEND_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = \
         f"global-frontend:{global_frontend_internal_port}"
 
     if 'expose-services' in conf:
@@ -249,24 +255,29 @@ def local_map_conf_to_env_placeholders(conf: Dict[Any, Any],
     placeholder_mapping["$$FEDDB_FRONTEND_EXPOSED_ADDRESS_FOR_OTHER_SERVICES$$"] = \
                 f"instance-manager-frontend:{frontend_internal_port}"
     env_mapping['FEDDB_FRONTEND_INTERNAL_PORT'] = frontend_internal_port
+    env_mapping['FEDDB_FRONTEND_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = f"instance-manager-frontend:{frontend_internal_port}"
     ## data importer
     dataimporter_internal_port = 8000
     placeholder_mapping["$$FEDDB_DATAIMPORTER_EXPOSED_ADDRESS_FOR_OTHER_SERVICES$$"] = \
                 f"dataimporter-api:{dataimporter_internal_port}"
     env_mapping['FEDDB_DATAIMPORTER_INTERNAL_PORT'] = dataimporter_internal_port
+    env_mapping['FEDDB_DATAIMPORTER_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = f"dataimporter-api:{dataimporter_internal_port}"
     ## harmonized-api
     harmonizer_internal_port = 8000
     placeholder_mapping["$$FEDDB_HARMONIZED_API_EXPOSED_ADDRESS_FOR_OTHER_SERVICES$$"] = \
                 f"harmonized-api:{harmonizer_internal_port}"
     env_mapping['FEDDB_HARMONIZED_API_INTERNAL_PORT'] = harmonizer_internal_port
+    env_mapping['FEDDB_HARMONIZED_API_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = f"harmonized-api:{harmonizer_internal_port}"
     ## meta-api
     meta_api_internal_port = 8000
     placeholder_mapping["$$FEDDB_META_API_EXPOSED_ADDRESS_FOR_OTHER_SERVICES$$"] = \
                 f"client-meta-api:{meta_api_internal_port}"
     env_mapping['FEDDB_META_API_INTERNAL_PORT'] = meta_api_internal_port
+    env_mapping['FEDDB_META_API_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = f"client-meta-api:{meta_api_internal_port}"
     ## meta-api-db
     meta_api_db_internal_port = 3306
     env_mapping['FEDDB_META_API_DB_INTERNAL_PORT'] = meta_api_db_internal_port
+    env_mapping['FEDDB_META_API_DB_EXPOSED_ADDRESS_FOR_OTHER_SERVICES'] = f"client-meta-api-db:{meta_api_db_internal_port}"
 
     ## expose services if wanted
     if 'expose-services' in conf:
