@@ -1,0 +1,157 @@
+services:
+  ### LOCAL DATA IMPORTER API
+  dataimporter-api:
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/data-importer-api/data-importer-api:${FEDDB_IMAGE_TAG}
+    env_file:
+      - "./envs/local-data-importer.env"
+    $$FEDDB_DATA_IMPORTER_USE_ENV_PORTS:+ports: ["${FEDDB_DATAIMPORTER_EXPOSED_ADDRESS}:${FEDDB_DATAIMPORTER_EXTERNAL_PORT}:${FEDDB_DATAIMPORTER_INTERNAL_PORT}"]$$
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    depends_on:
+      dataimport-db:
+        condition: service_healthy
+      harmonized-api:
+        condition: service_started
+    extra_hosts:
+      - ${FEDDB_EXTRA_HOST:-127.0.0.1:127.0.0.1}
+        # if no extra host is needed, we do a nonsense mapping. This way we can use an env var here
+  dataimport-db:
+    image: mariadb
+    env_file:
+      - "./envs/local-data-importer-db.env"
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    volumes:
+      - dataimportDB_volume:/var/lib/mysql
+    healthcheck:
+      test: "healthcheck.sh --connect --innodb_initialized"
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  ### LOCAL EXTERNAL ACCESS MANAGER
+  external-access-manager:
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/externalaccessmanager/externalaccessmanager:${FEDDB_IMAGE_TAG}
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    env_file:
+      - "./envs/local-external-access-manager.env"
+    depends_on:
+      - harmonized-api
+      - client-meta-api
+    extra_hosts:
+      - ${FEDDB_EXTRA_HOST:-127.0.0.1:127.0.0.1}
+        # if no extra host is needed, we do a nonsense mapping. This way we can use an env var here
+
+  # LOCAL FRONTEND
+  instance-manager-frontend:
+    image: ${FEDDB_FRONTEND_IMAGE}:${FEDDB_IMAGE_TAG}
+    restart: always
+    $$FEDDB_FRONTEND_USE_ENV_PORTS:+ports: ["${FEDDB_FRONTEND_ADDRESS}:${FEDDB_FRONTEND_EXTERNAL_PORT}:${FEDDB_FRONTEND_INTERNAL_PORT}"]$$
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    depends_on:
+      - harmonized-api
+      - client-meta-api
+      - dataimporter-api
+      - external-access-manager
+
+### LOCAL HARMONIZED API
+  harmonized-api:
+    restart: always
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/harmonized-api/harmonized-api:${FEDDB_IMAGE_TAG}
+    env_file:
+      - "./envs/local-harmonized-api.env"
+    $$FEDDB_HARMONIZED_API_USE_ENV_PORTS:+ports: ["${FEDDB_HARMONIZED_API_EXPOSED_ADDRESS}:${FEDDB_HARMONIZED_API_EXTERNAL_PORT}:${FEDDB_HARMONIZED_API_INTERNAL_PORT}"]$$
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    depends_on:
+      patientDB:
+        condition: service_healthy
+    extra_hosts:
+      - ${FEDDB_EXTRA_HOST:-127.0.0.1:127.0.0.1}
+        # if no extra host is needed, we do a nonsense mapping. This way we can use an env var here
+
+  patientDB:
+    # LOCAL PATIENT DATABASE
+    image: mongo:latest
+    env_file:
+      - "./envs/local-patient-db.env"
+    volumes:
+      - patientDB_volume:/data/db
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    healthcheck:
+      test: [ "CMD", "mongosh", "--eval", "'db.runCommand(\"ping\").ok'"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 5s
+
+  ### META API
+  client-meta-api:
+    restart: always
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/meta-api/client-meta-api:${FEDDB_IMAGE_TAG}
+    env_file:
+      - "./envs/local-meta-api.env"
+
+    $$FEDDB_META_API_USE_ENV_PORTS:+ports: ["${FEDDB_META_API_ADDRESS}:${FEDDB_META_API_EXTERNAL_PORT}:${FEDDB_META_API_INTERNAL_PORT}"]$$
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    depends_on:
+      client-meta-api-db:
+        condition: service_healthy
+      harmonized-api:
+        condition: service_started
+    extra_hosts:
+      - ${FEDDB_EXTRA_HOST:-127.0.0.1:127.0.0.1}
+        # if no extra host is needed, we do a nonsense mapping. This way we can use an env var here
+
+  client-meta-api-db:
+    image: mariadb
+    restart: always
+    env_file:
+      - "./envs/local-meta-api-db.env"
+    volumes:
+      - metaDB_volume:/var/lib/mysql
+    labels:
+      - ${FEDDB_WATCHTOWER_LABEL}
+    $$FEDDB_META_API_DB_USE_ENV_PORTS:+ports: ["${FEDDB_META_API_DB_ADDRESS}:${FEDDB_META_API_DB_EXTERNAL_PORT}:${FEDDB_META_API_DB_INTERNAL_PORT}"]$$
+    healthcheck:
+      test: "healthcheck.sh --connect --innodb_initialized"
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  reverse-proxy:
+    image: nginx:latest # Or a specific version if needed
+    restart: always
+    ports:
+      - ${FEDDB_MAIN_ACCESS_ADDRESS}:${FEDDB_MAIN_ACCESS_PORT}:${FEDDB_NGINX_INTERNAL_PORT}
+    volumes:
+      - ./envs/internal_nginx_conf.conf:/etc/nginx/nginx.conf # overwrite the nginx conv to include sites-enabled
+      - ./nginx_server.conf:/etc/nginx/sites-available/server_nginx.conf
+      - ./nginx_server.conf:/etc/nginx/sites-enabled/server_nginx.conf
+    depends_on:
+      - harmonized-api
+      - client-meta-api
+      - dataimporter-api
+      - instance-manager-frontend
+      - external-access-manager
+    profiles:
+      - use-internal-nginx
+        # only use this service if the corresponding profile is used
+    extra_hosts:
+      - ${FEDDB_EXTRA_HOST:-127.0.0.1:127.0.0.1}
+        # if no extra host is needed, we do a nonsense mapping. This way we can use an env var here
+
+volumes:
+  dataimportDB_volume:
+  patientDB_volume:
+  metaDB_volume:
+
+networks:
+  default:
+    name: ${FEDDB_NETWORK_NAME}
+    external: false

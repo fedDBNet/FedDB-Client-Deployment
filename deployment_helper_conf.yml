@@ -1,0 +1,46 @@
+local:
+  # everything concering the deployment of a local database instance
+  domain: localhost
+    # also used as project name in docker compose, so this will be used
+    # as suffix for the container names
+  resultfolder: dev_deployment_clinic
+    # The name of the folder that will be created containing all env/compose/... files
+  # expose-services:
+  #   # all services with ports specified under this key will be exposed to the host
+  #   # as 0.0.0.0:<*-external-port>
+  #   # Do not use the same port twice or use a port that is already used on the host
+  #   # For any service that is exposed, the other services/the nginx will send requests to their
+  #   # exposed 0.0.0.0:port, NOT via the docker network. The docker network is just used
+  #   # for non-exposed services
+  #   # this means you can also stop any exposed service and deploy it locally on 0.0.0.0 and the
+  #   # correct port and other services will then use your local service
+  #   # IMPORTANT: use 0.0.0.0 or the address of the docker0 interface, this is where the services
+  #   # send their requests to as this is how host.docker.internal works
+  #   frontend-external-port: 8006
+  #   dataimporter-external-port: 8007
+  #   harmonizer-external-port: 8008
+  #   meta-api-external-port: 8009
+  #   meta-api-db-external-port: 8010
+
+  # either use internal nginx or expose the services directly or both
+  # in the case of both, the internal nginx will use the exposed ports
+  # and the services communicate directly via the exposed ports to other services
+  # IMPORTANT: The frontend will send requests to other services always via it's own address
+  # this means that if nginx is not used, the frontend will not be able to reach any service
+  use-internal-nginx:
+    nginx-external-port: 8005
+      # must be given!
+
+  keycloak-address: https://staging.featurecloud.ai/feddb/local-auth
+    # the address of the keycloak instance that should be used
+    # if keycloak runs on the same machine but in a different network, it's address must either
+    # be the domain it runs on or if it runs on localhost, it must be
+    # http://host.docker.internal:<relevant_port>
+  global-address: platform.microbaiome.featurecloud.ai
+    # the address of the global platform that services/the frontend will connect to
+    # the different global services should be behind different endpoints, they can be seen in
+    # the global deployments nginx configuration
+  frontend-image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-microbaiome
+    # the frontend image to use
+  # image-tag: latest
+    # the tag to use, is applied to ALL services with custom images
