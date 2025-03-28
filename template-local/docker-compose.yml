@@ -2,6 +2,7 @@ services:
   ### LOCAL DATA IMPORTER API
   dataimporter-api:
     image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/data-importer-api/data-importer-api:${FEDDB_IMAGE_TAG}
+    restart: always
     env_file:
       - "./envs/local-data-importer.env"
     $$FEDDB_DATA_IMPORTER_USE_ENV_PORTS:+ports: ["${FEDDB_DATAIMPORTER_EXPOSED_ADDRESS}:${FEDDB_DATAIMPORTER_EXTERNAL_PORT}:${FEDDB_DATAIMPORTER_INTERNAL_PORT}"]$$
@@ -17,6 +18,7 @@ services:
         # if no extra host is needed, we do a nonsense mapping. This way we can use an env var here
   dataimport-db:
     image: mariadb
+    restart: always
     env_file:
       - "./envs/local-data-importer-db.env"
     labels:
@@ -32,6 +34,7 @@ services:
   ### LOCAL EXTERNAL ACCESS MANAGER
   external-access-manager:
     image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/externalaccessmanager/externalaccessmanager:${FEDDB_IMAGE_TAG}
+    restart: always
     labels:
       - ${FEDDB_WATCHTOWER_LABEL}
     env_file:
@@ -58,8 +61,8 @@ services:
 
 ### LOCAL HARMONIZED API
   harmonized-api:
-    restart: always
     image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/harmonized-api/harmonized-api:${FEDDB_IMAGE_TAG}
+    restart: always
     env_file:
       - "./envs/local-harmonized-api.env"
     $$FEDDB_HARMONIZED_API_USE_ENV_PORTS:+ports: ["${FEDDB_HARMONIZED_API_EXPOSED_ADDRESS}:${FEDDB_HARMONIZED_API_EXTERNAL_PORT}:${FEDDB_HARMONIZED_API_INTERNAL_PORT}"]$$
@@ -75,6 +78,7 @@ services:
   patientDB:
     # LOCAL PATIENT DATABASE
     image: mongo:latest
+    restart: always
     env_file:
       - "./envs/local-patient-db.env"
     volumes:
@@ -90,8 +94,8 @@ services:
 
   ### META API
   client-meta-api:
-    restart: always
     image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/meta-api/client-meta-api:${FEDDB_IMAGE_TAG}
+    restart: always
     env_file:
       - "./envs/local-meta-api.env"
 
