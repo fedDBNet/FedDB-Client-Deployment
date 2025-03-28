@@ -8,6 +8,13 @@ Deployment is done using docker compose. Therefore, [Docker](https://www.docker.
 and [docker compose](https://docs.docker.com/compose/) should be installed. Furthermore, a helper
 script to generate the necessary env and yaml files exist. For this, 
 [python3](https://www.python.org/) is required.
+To access the different docker images used in this project, you need to login into our git registry:
+```
+docker login gitlab.cosy.bio:5050
+```
+If you don't have any access, contact UHAM.
+If you have access and are deploying on a server not from the dev team, please use a temporary 
+personal access token with only access to the docker registry.
 
 ## Keycloak
 Most images depend on KeyCloak for authorization and have authorization activated. 
