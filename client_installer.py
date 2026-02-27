@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Initializes the NEBULA_FL_CLIENT_DIR as a FLNet Client on the current machine.
+Initializes the FLNET_CLIENT_DIR as a FLNet Client on the current machine.
 Checks first for requirements, requests relevant parameters from the user and
 initializes secrets.
 Leaves the user with instructions on how to then start and setup their FLNet Client.
@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 BASE_DIR_INSTALLER_SCRIPT = Path(__file__).resolve().parent
-NEBULA_FL_CLIENT_DIR = BASE_DIR_INSTALLER_SCRIPT / 'FLNet_client'
-NEBULA_FL_CLIENT_ENV_DIR = NEBULA_FL_CLIENT_DIR / 'env'
+FLNET_CLIENT_DIR = BASE_DIR_INSTALLER_SCRIPT / 'FLNet_client'
+FLNET_CLIENT_ENV_DIR = FLNET_CLIENT_DIR / 'env'
 OVERWRITE_SECRETS = False
 
 DEFAULT_PLATFORM_ADDRESS = "federated-learning.net"
@@ -469,7 +469,7 @@ def main():
     importer_secret_key = gen_secret()
     importer_api_client_secret = gen_secret()
 
-    dataimport_secrets_file = NEBULA_FL_CLIENT_ENV_DIR / 'dataimport-secrets.env'
+    dataimport_secrets_file = FLNET_CLIENT_ENV_DIR / 'dataimport-secrets.env'
     if not write_env_file(
         dataimport_secrets_file,
         MYSQL_PASSWORD=importer_db_password,
@@ -483,7 +483,7 @@ def main():
     # --- orch-secrets ---
     orch_db_password = gen_secret()
 
-    orch_api_secrets_file = NEBULA_FL_CLIENT_ENV_DIR / 'orch-secrets.env'
+    orch_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'orch-secrets.env'
     if not write_env_file(
         orch_api_secrets_file,
         POSTGRES_PASSWORD=orch_db_password,
@@ -495,7 +495,7 @@ def main():
     learning_db_password = gen_secret()
     learning_api_client_secret = gen_secret()
 
-    learning_api_secrets_file = NEBULA_FL_CLIENT_ENV_DIR / 'local-learning-secrets.env'
+    learning_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'local-learning-secrets.env'
     if not write_env_file(
         learning_api_secrets_file,
         POSTGRES_PASSWORD=learning_db_password,
@@ -512,7 +512,7 @@ def main():
         # Needs to be used by the admin, so we make it a bit shorter and easier to handle
         # We advise the user to change it after first login anyways!
 
-    keycloak_secrets_file = NEBULA_FL_CLIENT_ENV_DIR / 'keycloak-secrets.env'
+    keycloak_secrets_file = FLNET_CLIENT_ENV_DIR / 'keycloak-secrets.env'
     if not write_env_file(
         keycloak_secrets_file,
         POSTGRES_PASSWORD=keycloak_db_password,
@@ -550,7 +550,7 @@ def main():
     global_base_with_port = f"{global_domain_name}{global_port_suffix}"
 
     if not write_env_file(
-        NEBULA_FL_CLIENT_DIR / '.env',
+        FLNET_CLIENT_DIR / '.env',
         EXPOSED_IP_ADDRESS=exposed_ip_address,
             # IP address for docker binding (docker doesn't understand 'localhost')
         EXPOSED_PORT=client_port,
@@ -572,7 +572,7 @@ def main():
     # ========================================================================
     print("⚠️")
     print("The FLNet Client is not started yet. To start it, please do the following:\n")
-    print(f"cd {NEBULA_FL_CLIENT_DIR}")
+    print(f"cd {FLNET_CLIENT_DIR}")
     print("docker compose up -d\n")
     print("After starting, you need to perform the following steps to finalize the setup:")
     print(f"1. Access the Keycloak admin console at {deployed_on_address}/auth/")
