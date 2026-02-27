@@ -1,0 +1,358 @@
+services:
+  orch-api:
+    user: "0:0"
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/orch-api/orch-api:latest
+    restart: always
+    pull_policy: always
+    env_file:
+      - env/orch-secrets.env
+    environment:
+      - QUARKUS_HTTP_CORS_ENABLED=true
+      - QUARKUS_HTTP_CORS_ORIGINS=${DEPLOYED_ON_ADDRESS}
+      - QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://orch-api-db:5432/local-learning-management
+      - QUARKUS_DATASOURCE_USERNAME=user
+      - CONTAINER_NETWORK_NAMES=${COMPOSE_PROJECT_NAME}_local-learning-network
+      - CONTAINER_FILE_TRANSFER_VOLUME_NAME=${COMPOSE_PROJECT_NAME}_orch-data
+      - CONTAINER_FILE_TRANSFER_VOLUME_PATH=/mnt/input
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - orch-data-volume:/mnt/input:rw
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    depends_on:
+      local-learning-api-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - local-learning-network
+
+  orch-api-db:
+    image:  postgres:17.5
+    restart: always
+    environment:
+      - POSTGRES_DB=local-learning-management
+      - POSTGRES_USER=user
+      - POSTGRES_PORT=5432
+    env_file:
+      - env/orch-secrets.env
+    volumes:
+      - orch-api-db-volume:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d local-learning-management"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - local-learning-network
+
+  local-learning-api:
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/global-learning-apis/local-learning-api:latest
+    restart: always
+    pull_policy: always
+    env_file:
+      - env/local-learning-secrets.env
+    environment:
+    - QUARKUS_HTTP_CORS_ENABLED=true
+    - QUARKUS_HTTP_CORS_ORIGINS=${DEPLOYED_ON_ADDRESS}
+    - QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://local-learning-api-db:5432/local-learning-management
+    - QUARKUS_DATASOURCE_USERNAME=user
+    - QUARKUS_REST_CLIENT_ORCH_DOCKER_SERVICE_URL=http://orch-api:8080
+    - QUARKUS_REST_CLIENT_CONTROLLER_API_URL=http://controller:8000
+    - QUARKUS_REST_CLIENT_GLOBAL_SCHEMA_API_URL=${GLOBAL_SCHEMA_API_URL}
+    - QUARKUS_REST_CLIENT_GLOBAL_API_URL=${GLOBAL_LEARNING_API_URL}
+    - GLOBAL_SOCKET_URI=${GLOBAL_LEARNING_API_WEBSOCKET_URL}
+    - QUARKUS_OIDC_DISCOVERY_ENABLED=false
+    - QUARKUS_OIDC_AUTH_SERVER_URL=http://keycloak:8080/auth/realms/FLNet-Client
+    - QUARKUS_OIDC_TOKEN_PATH=/protocol/openid-connect/token
+    - QUARKUS_OIDC_AUTHORIZATION_PATH=/protocol/openid-connect/auth
+    - QUARKUS_KEYCLOAK_ADMIN_CLIENT_SERVER_URL=http://keycloak:8080/auth
+    - QUARKUS_OIDC_INTROSPECTION_PATH=/protocol/openid-connect/token/introspect
+    - QUARKUS_KEYCLOAK_ADMIN_CLIENT_REALM=FLNet-Client
+    - QUARKUS_OIDC_CLIENT_ID=local-learning-api
+    - QUARKUS_KEYCLOAK_ADMIN_CLIENT_CLIENT_ID=local-learning-api
+    - CONTAINER_NETWORK_NAMES=${COMPOSE_PROJECT_NAME}_local-learning-network
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    depends_on:
+      local-learning-api-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    networks:
+      - local-learning-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  local-learning-api-db:
+    image:  postgres:17.5
+    restart: always
+    environment:
+      - POSTGRES_DB=local-learning-management
+      - POSTGRES_USER=user
+      - POSTGRES_PORT=5432
+    env_file:
+      - env/local-learning-secrets.env
+    volumes:
+      - local-learning-api-db-volume:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d local-learning-management"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - local-learning-network
+
+  instance-manager-frontend:
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-daibetes:latest
+    # TODO: use the correct frontend image
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    depends_on:
+      local-learning-api:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+    restart: always
+    pull_policy: always
+    networks:
+      - local-learning-network
+
+  controller:
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/feature-cloud-controller/controller:latest
+    environment:
+      - RELAY_ADDRESS_TCP=${GLOBAL_RELAY_TCP_ADDRESS}
+      - RELAY_URI_HTTP=${GLOBAL_RELAY_HTTP_URL}
+      - RELAY_TRUST_CERTIFICATE=true
+      - WORKFLOW_LEARNING_API_WS_ADDRESS=ws://local-learning-api:8080
+      - LOG_LEVEL_STDOUT=INFO
+    restart: always
+    pull_policy: always
+    depends_on:
+      keycloak:
+        condition: service_started
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - local-learning-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  dataimporter-api:
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/data-importer-api/data-importer-api:latest
+    env_file:
+      - env/dataimport-secrets.env
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    environment:
+      - SQL_ENGINE=django.db.backends.mysql
+      - SQL_DATABASE=dataimport
+      - SQL_USER=user
+      - SQL_HOST=dataimport-db
+      - SQL_PORT=3306
+      - DEBUG=False
+      - KEYCLOAK_ENABLED='True'
+      - KEYCLOAK_REALM=FLNet-Client
+      - KEYCLOAK_CLIENT_ID=data-importer-api
+      - KEYCLOAK_SERVER_URL=http://keycloak:8080/auth
+      - HARMONIZED_API_URL=http://local-learning-api:8080
+      - HARMONIZED_WS_URL=ws://local-learning-api:8080
+      - CORS_ALLOWED_ORIGINS=${DEPLOYED_ON_ADDRESS}
+      - ALLOWED_HOSTS=dataimporter-api,dataimporter-backend,dataimporter-api:8000
+      - REMOTE_APP_EXECUTION_HTTP_SERVER_BASE_URL=http://orch-api:8080
+      - REMOTE_APP_EXECUTION_WS_PUBLIC_HOST=dataimporter-api
+      - REMOTE_APP_EXECUTION_WS_PUBLIC_PORT=8001
+      - REMOTE_APP_EXECUTION_WS_PUBLIC_PATH=run
+    restart: always
+    pull_policy: always
+    volumes:
+      - dataimport-files-volume:/usr/src/api/files
+    depends_on:
+      dataimport-db:
+        condition: service_healthy
+      local-learning-api:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    networks:
+      - local-learning-network
+
+  dataimport-db:
+    image: mariadb:12.0.2
+    env_file:
+      - env/dataimport-secrets.env
+    environment:
+      - MYSQL_DATABASE=dataimport
+      - MYSQL_USER=user
+    volumes:
+      - dataimport-db-volume:/var/lib/mysql
+    restart: always
+    healthcheck:
+      test: "healthcheck.sh --connect --innodb_initialized"
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - local-learning-network
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    command:
+      - "start"
+      - "--import-realm"
+      - "--health-enabled=true"
+    env_file:
+      - env/keycloak-secrets.env
+    environment:
+      - KC_DB=postgres
+      - KC_BOOTSTRAP_ADMIN_USERNAME=keycloak-admin
+      - KC_DB_URL_DATABASE=keycloak
+      - KC_DB_SCHEMA=public
+      - KC_DB_URL=jdbc:postgresql://keycloak-postgres/keycloak
+      - KC_DB_USERNAME=keycloak
+      - KC_HOSTNAME=${DEPLOYED_ON_ADDRESS}/auth
+      - KC_HTTP_RELATIVE_PATH=/auth
+        # Without this for some reason the resources are not properly mapped to /auth
+        # although this is given in the hostname
+      - FRONTEND_BASE_URL=${DEPLOYED_ON_ADDRESS}
+        # needed as allowed web origins/redirect URIs as keycloak runs on /auth
+      #- KC_PROXY=edge
+          # edge means HTTPS ends at nginx
+      - KC_PROXY_HEADERS=xforwarded
+      #- KC_HOSTNAME_STRICT_BACKCHANNEL='true'
+      - KC_LOG_LEVEL=INFO
+      - KC_HTTP_ENABLED=true
+        # as we don't encrypt between nginx and keycloak (yet)
+    networks:
+      - local-learning-network
+    volumes:
+      # Mount the realm file directly into the auto-import directory
+      - ./keycloak-realms:/opt/keycloak/data/import/
+    healthcheck:
+      # there is no wget or curl available in the keycloak image for security reasons
+      # this uses bash features:
+      # 1. Create a read/write "file" descriptor 3 that is connected to the TCP socket of keycloak
+      #    Bash automatically translates read/write of file descriptor 3 to network I/O
+      # 2. Send a raw HTTP GET request to the health/ready endpoint
+      # 3. Read the response from the socket and search for "200 OK"
+      # If "200 OK" is found, the healthcheck passes
+      test:
+        - CMD-SHELL
+        - 'exec 3<>/dev/tcp/127.0.0.1/9000; echo -e "GET /auth/health/ready HTTP/1.1\r\nHost: localhost:9000\r\nConnection: close\r\n\r\n" >&3; cat <&3 | grep -q "200 OK"'
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+
+  keycloak-postgres:
+    image: postgres:17.5
+    volumes:
+      - keycloak_postgres_volume:/var/lib/postgresql
+    env_file:
+      - env/keycloak-secrets.env
+    environment:
+      - POSTGRES_DB=keycloak
+      - POSTGRES_USER=keycloak
+      - PGUSER=keycloak
+    networks:
+      - local-learning-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  reverse-proxy-unencrypted:
+    image: nginx:latest # Or a specific version if needed
+    environment:
+      - NGINX_HOST=${DEPLOYED_ON_ADDRESS}
+      - NGINX_SSL_SPECIFIC_CONFIG=nginx_conf_HTTP.conf
+    ports:
+      - ${EXPOSED_IP_ADDRESS}:${EXPOSED_PORT}:80
+    restart: always
+      # sometimes nginx is to fast. While during runtime it will retry to find the upstream servers,
+      # on startup it will just die. In this case we just restart the nginx and get it to runtime
+      # mode where it's more flexible/robust
+    volumes:
+      - ./nginx_server.conf:/etc/nginx/nginx.conf # overwrite the nginx conv to include sites-enabled
+      - ./nginx.conf:/etc/nginx/sites-available/server_nginx.conf
+      - ./nginx.conf:/etc/nginx/sites-enabled/server_nginx.conf
+      - ./nginx_conf_HTTP.conf:/etc/nginx/templates/ssl-config.conf.template:ro
+        # nginx will process templates and substitute env vars automatically
+    depends_on:
+      # depends on everything as if it can't discover the services, it will fail and exit
+      instance-manager-frontend:
+        condition: service_started
+      controller:
+        condition: service_started
+      dataimporter-api:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      local-learning-api:
+        condition: service_started
+      orch-api:
+        condition: service_started
+    networks:
+      - local-learning-network
+    profiles:
+      - no-ssl
+
+  reverse-proxy-encrypted:
+    image: nginx:latest # Or a specific version if needed
+    env_file:
+      - env/nginx.env
+    environment:
+      - NGINX_HOST=${DEPLOYED_ON_ADDRESS}
+      - NGINX_SSL_SPECIFIC_CONFIG=nginx_conf_HTTPS.conf
+    ports:
+      - ${EXPOSED_IP_ADDRESS}:${EXPOSED_PORT}:80
+    restart: always
+      # sometimes nginx is to fast. While during runtime it will retry to find the upstream servers,
+      # on startup it will just die. In this case we just restart the nginx and get it to runtime
+      # mode where it's more flexible/robust
+    volumes:
+      - ./nginx_server.conf:/etc/nginx/nginx.conf # overwrite the nginx conv to include sites-enabled
+      - ./nginx.conf:/etc/nginx/sites-available/server_nginx.conf
+      - ./nginx.conf:/etc/nginx/sites-enabled/server_nginx.conf
+      - ./nginx_conf_HTTPS.conf:/etc/nginx/templates/ssl-config.conf.template:ro
+        # nginx will process templates and substitute env vars automatically
+      - ${SSL_CERT_PUBLIC_KEY}:/etc/nginx/ssl/public.crt:ro
+      - ${SSL_CERT_PRIVATE_KEY}:/etc/nginx/ssl/private.key:ro
+
+    depends_on:
+      # depends on everything as if it can't discover the services, it will fail and exit
+      instance-manager-frontend:
+        condition: service_started
+      controller:
+        condition: service_started
+      dataimporter-api:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+      local-learning-api:
+        condition: service_started
+      orch-api:
+        condition: service_started
+    networks:
+      - local-learning-network
+    profiles:
+      - ssl
+
+volumes:
+  local-learning-api-db-volume:
+  dataimport-db-volume:
+  keycloak_postgres_volume:
+  orch-data-volume:
+    name: ${COMPOSE_PROJECT_NAME}_orch-data
+  orch-api-db-volume:
+  dataimport-files-volume:
+
+networks:
+  local-learning-network:
+    driver: bridge
+    name: ${COMPOSE_PROJECT_NAME}_local-learning-network

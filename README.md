@@ -1,29 +1,17 @@
-# FedDB Client Deployment
-Deployment is currently being offered via a python script that, based on yaml file input and a given template folder, will generate a folder
-containing a docker compose file, nginx config and multiple env files. Then, a simple docker
-compose command can start the local database instance or the global platform components.
+# Purpose
+This repo serves to deploy a FLNet Client which allows to participate in the
+FLNet project (TODO: add link to prod docs welcome page), contributing data in a privacy preserving way 
+towards an independent, open source research environment with almost zero trust required towards
+the FLNet Platform and Network, giving you full data governance but allowing for collaboration.
 
-## Prerequisite
-Deployment is done using docker compose. Therefore, [Docker](https://www.docker.com/)
-and [docker compose](https://docs.docker.com/compose/) should be installed. Furthermore, a helper
-script to generate the necessary env and yaml files exist. For this, 
-[python3](https://www.python.org/) is required.
-To access the different docker images used in this project, you need to login into our git registry:
-```
+For information on how to use the client, you can checkout the documentation: (TODO: add link to the correct docs)
+
+# How to deploy
+Please refer to the relevant documentation (TODO: add link to the correct docs).
+
+# Requirements during development until we preprint (TODO: remove this section)
+As we are still in development, there are some caveats:
+1. you need to be logged into our gitlab instance to be able to pull the images specified here:
+```bash
 docker login gitlab.cosy.bio:5050
 ```
-If you don't have any access, contact UHAM.
-If you have access and are deploying on a server not from the dev team, please use a temporary 
-personal access token with only access to the docker registry.
-
-## Keycloak
-Most images depend on KeyCloak for authorization and have authorization activated. 
-There are two globally deployed KeyCloak instances that can be used for development purposes.
-These are also currently used in development deployments.
-
-If you want to setup your own KeyCloak instance [click here](https://www.keycloak.org/docs/latest/server_admin/#:~:text=Keycloak%20is%20a%20single%20sign,have%20deployed%20in%20their%20organization) is some general information about how Keycloak works.
-
-### Deployment of the development version
-You can use the python script at `deployment/deployment_helper.py`. This will based on the
-template folders generate a deployment folder for you.
-For configuration options, check the `deployment/deployment_helper_conf.yml` file.
