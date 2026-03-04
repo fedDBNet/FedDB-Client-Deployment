@@ -20,7 +20,7 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     depends_on:
-      local-learning-api-db:
+      orch-api-db:
         condition: service_healthy
       keycloak:
         condition: service_healthy
@@ -104,8 +104,7 @@ services:
       - local-learning-network
 
   instance-manager-frontend:
-    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-daibetes:latest
-    # TODO: use the correct frontend image
+    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:latest
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     depends_on:
@@ -130,7 +129,7 @@ services:
     pull_policy: always
     depends_on:
       keycloak:
-        condition: service_started
+        condition: service_healthy
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     networks:
@@ -158,7 +157,7 @@ services:
       - HARMONIZED_API_URL=http://local-learning-api:8080
       - HARMONIZED_WS_URL=ws://local-learning-api:8080
       - CORS_ALLOWED_ORIGINS=${DEPLOYED_ON_ADDRESS}
-      - ALLOWED_HOSTS=dataimporter-api,dataimporter-backend,dataimporter-api:8000
+      - ALLOWED_HOSTS=dataimporter-api,${DEPLOYED_ON_DOMAIN},dataimporter-api:8000
       - REMOTE_APP_EXECUTION_HTTP_SERVER_BASE_URL=http://orch-api:8080
       - REMOTE_APP_EXECUTION_WS_PUBLIC_HOST=dataimporter-api
       - REMOTE_APP_EXECUTION_WS_PUBLIC_PORT=8001
@@ -197,7 +196,7 @@ services:
       - local-learning-network
 
   keycloak:
-    image: quay.io/keycloak/keycloak:latest
+    image: quay.io/keycloak/keycloak:26.5
     command:
       - "start"
       - "--import-realm"
@@ -267,10 +266,7 @@ services:
       retries: 5
 
   reverse-proxy-unencrypted:
-    image: nginx:latest # Or a specific version if needed
-    environment:
-      - NGINX_HOST=${DEPLOYED_ON_ADDRESS}
-      - NGINX_SSL_SPECIFIC_CONFIG=nginx_conf_HTTP.conf
+    image: cgr.dev/chainguard/nginx:latest # Or a specific version if needed
     ports:
       - ${EXPOSED_IP_ADDRESS}:${EXPOSED_PORT}:80
     restart: always
@@ -278,11 +274,12 @@ services:
       # on startup it will just die. In this case we just restart the nginx and get it to runtime
       # mode where it's more flexible/robust
     volumes:
-      - ./nginx_server.conf:/etc/nginx/nginx.conf # overwrite the nginx conv to include sites-enabled
-      - ./nginx.conf:/etc/nginx/sites-available/server_nginx.conf
-      - ./nginx.conf:/etc/nginx/sites-enabled/server_nginx.conf
-      - ./nginx_conf_HTTP.conf:/etc/nginx/templates/ssl-config.conf.template:ro
-        # nginx will process templates and substitute env vars automatically
+      - ./nginx_server.conf:/etc/nginx/nginx.conf
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+        # Overwrites the default server block;
+        # WARNING: server_name in this file is patched by client_installer.py
+        # To change the domain, re-run the installer instead of editing this file
+      - ./nginx_conf_HTTP.conf:/etc/nginx/conf.d/ssl-config.conf:ro
     depends_on:
       # depends on everything as if it can't discover the services, it will fail and exit
       instance-manager-frontend:
@@ -303,24 +300,20 @@ services:
       - no-ssl
 
   reverse-proxy-encrypted:
-    image: nginx:latest # Or a specific version if needed
-    env_file:
-      - env/nginx.env
-    environment:
-      - NGINX_HOST=${DEPLOYED_ON_ADDRESS}
-      - NGINX_SSL_SPECIFIC_CONFIG=nginx_conf_HTTPS.conf
+    image: cgr.dev/chainguard/nginx:latest # Or a specific version if needed
     ports:
-      - ${EXPOSED_IP_ADDRESS}:${EXPOSED_PORT}:80
+      - ${EXPOSED_IP_ADDRESS}:${EXPOSED_PORT}:443
     restart: always
       # sometimes nginx is to fast. While during runtime it will retry to find the upstream servers,
       # on startup it will just die. In this case we just restart the nginx and get it to runtime
       # mode where it's more flexible/robust
     volumes:
-      - ./nginx_server.conf:/etc/nginx/nginx.conf # overwrite the nginx conv to include sites-enabled
-      - ./nginx.conf:/etc/nginx/sites-available/server_nginx.conf
-      - ./nginx.conf:/etc/nginx/sites-enabled/server_nginx.conf
-      - ./nginx_conf_HTTPS.conf:/etc/nginx/templates/ssl-config.conf.template:ro
-        # nginx will process templates and substitute env vars automatically
+      - ./nginx_server.conf:/etc/nginx/nginx.conf
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+        # Overwrites the default server block;
+        # WARNING: server_name in this file is patched by client_installer.py
+        # To change the domain, re-run the installer instead of editing this file
+      - ./nginx_conf_HTTPS.conf:/etc/nginx/conf.d/ssl-config.conf:ro
       - ${SSL_CERT_PUBLIC_KEY}:/etc/nginx/ssl/public.crt:ro
       - ${SSL_CERT_PRIVATE_KEY}:/etc/nginx/ssl/private.key:ro
 

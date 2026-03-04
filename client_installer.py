@@ -36,12 +36,13 @@ def gen_secret(length: int = 64) -> str:
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
-def write_env_file(filepath: Path, **variables) -> bool:
+def write_env_file(filepath: Path, comments: dict = None, **variables) -> bool:
     """
     Write environment variables to a file with overwrite protection.
 
     Args:
         filepath: Path to the .env file
+        comments: Optional dict mapping variable names to comment lines prepended before that variable
         **variables: Key-value pairs to write (VAR=value format)
 
     Returns:
@@ -62,6 +63,8 @@ def write_env_file(filepath: Path, **variables) -> bool:
     # Write variables
     with filepath.open('w') as f:
         for key, value in variables.items():
+            if comments and key in comments:
+                f.write(f"# {comments[key]}\n")
             f.write(f"{key}={value}\n")
 
     # Set permissions to 600 (owner read/write only)
@@ -190,6 +193,27 @@ class Domain:
             result += f":{self._port}"
 
         return result
+
+def patch_nginx_server_name(nginx_conf_path: Path, server_name: str) -> None:
+    """
+    Replace the server_name directive in the main server block of nginx.conf.
+    Uses the first server_name occurrence (the main block precedes the catch-all).
+    Works both for the initial placeholder (${NGINX_HOST}) and on re-runs where
+    a real domain is already present.
+    """
+    content = nginx_conf_path.read_text()
+    new_content = re.sub(
+        r'^(\s*server_name\s+).*?;\s*$',
+        rf'\g<1>{server_name};',
+        content,
+        count=1,
+        flags=re.MULTILINE
+    )
+    if new_content == content:
+        print(f"Warning: Could not find server_name directive in '{nginx_conf_path}'. nginx may not use the correct hostname.")
+        return
+    nginx_conf_path.write_text(new_content)
+
 
 def validate_port(port_str: str) -> bool:
     """Validate that port is a number between 1 and 65535."""
@@ -355,9 +379,9 @@ def main():
             if confirm2 in ('y', 'yes'):
                 print("Continuing without SSL encryption as per user request.")
             else:
-                exit("Aborting setup as per user request.")
+                sys.exit("Aborting setup as per user request.")
         else:
-            exit("Aborting setup as per user request.")
+            sys.exit("Aborting setup as per user request.")
 
     # Warning 1: Exposed to network without SSL encryption
     if exposed_address != "localhost" and not ssl_folder:
@@ -379,9 +403,9 @@ def main():
                 if confirm2 in ('y', 'yes'):
                     print("Continuing without SSL encryption as per user request.")
                 else:
-                    exit("Aborting setup as per user request.")
+                    sys.exit("Aborting setup as per user request.")
             else:
-                exit("Aborting setup as per user request.")
+                sys.exit("Aborting setup as per user request.")
         print()
 
     # Warning 2: Domain provided without SSL certificates
@@ -389,6 +413,8 @@ def main():
         print("WARNING: You specified HTTPS protocol but did not provide SSL certificates.")
         print("  Without SSL certificates, the client cannot serve HTTPS traffic directly.")
         print("  You MUST use an external reverse proxy (e.g., nginx, Caddy) to handle SSL termination.")
+        print("  Make sure to forward traffic from port 443 to the FLNet Client and handle SSL termination in the reverse proxy.")
+        print("  Furthermore make sure to preserve the Host header ($host) in the reverse proxy or the FLNet Client will not work properly!")
         input("Press Enter to continue...")
         print()
 
@@ -527,14 +553,23 @@ def main():
     print()
 
     # ========================================================================
-    # 5. Save the final .env file
+    # 5. Patch nginx.conf and save the final .env file
     # ========================================================================
     if domain_obj is not None:
         deployed_on_address = str(domain_obj)
+        # DEPLOYED_ON_DOMAIN: bare hostname[:port] without protocol, for Django ALLOWED_HOSTS.
+        # nginx forwards the original Host header ($host) to backends, which contains no protocol.
+        deployed_on_domain = domain_obj.domain_name()
+        if not domain_obj.is_default_port():
+            deployed_on_domain += f":{domain_obj.port()}"
     else:
         # No domain - use exposed address with http
         port_suffix = f":{client_port}" if client_port != "80" else ""
         deployed_on_address = f"http://{exposed_address}{port_suffix}"
+        # For ALLOWED_HOSTS: include port only if non-standard
+        deployed_on_domain = exposed_address
+        if client_port not in ("80", "443"):
+            deployed_on_domain += f":{client_port}"
 
     # Build global URLs based on global_domain_obj
     global_protocol = global_domain_obj.protocol()
@@ -549,12 +584,24 @@ def main():
 
     global_base_with_port = f"{global_domain_name}{global_port_suffix}"
 
+    # Bake the domain into nginx.conf directly — no envsubst or shell needed at runtime.
+    # On re-runs the regex replaces whatever value is already there.
+    # server_name uses bare hostname only: nginx strips the port from the Host header before
+    # matching, so including the port here would prevent any request from matching.
+    nginx_server_name = domain_obj.domain_name() if domain_obj is not None else exposed_address
+    nginx_conf_path = FLNET_CLIENT_DIR / 'nginx.conf'
+    patch_nginx_server_name(nginx_conf_path, nginx_server_name)
+
     if not write_env_file(
         FLNET_CLIENT_DIR / '.env',
+        comments={
+            'DEPLOYED_ON_ADDRESS': 'WARNING: Changing DEPLOYED_ON_ADDRESS or DEPLOYED_ON_DOMAIN here will NOT update the nginx server_name. Re-run the installer to regenerate nginx.conf with the new domain.',
+        },
         EXPOSED_IP_ADDRESS=exposed_ip_address,
             # IP address for docker binding (docker doesn't understand 'localhost')
         EXPOSED_PORT=client_port,
         DEPLOYED_ON_ADDRESS=deployed_on_address,
+        DEPLOYED_ON_DOMAIN=deployed_on_domain,
         GLOBAL_BASE_ADDRESS=global_domain_name,
         GLOBAL_LEARNING_API_URL=f"{global_protocol}://{global_base_with_port}/api",
         GLOBAL_LEARNING_API_WEBSOCKET_URL=f"{global_ws_protocol}://{global_base_with_port}/api",
@@ -562,8 +609,8 @@ def main():
         GLOBAL_RELAY_HTTP_URL=f"{global_protocol}://{global_base_with_port}/relay",
         GLOBAL_RELAY_TCP_ADDRESS=f"{global_domain_name}:{global_tcp_port}",
         COMPOSE_PROFILES="no-ssl" if not ssl_folder else "ssl",
-        SSL_CERT_PUBLIC_KEY=fullchain_file if fullchain_file else "dummyfile",
-        SSL_CERT_PRIVATE_KEY=privkey_file if privkey_file else "dummyfile",
+        SSL_CERT_PUBLIC_KEY=str(fullchain_file) if fullchain_file else "dummyfile",
+        SSL_CERT_PRIVATE_KEY=str(privkey_file) if privkey_file else "dummyfile",
     ):
         sys.exit(1)
 
