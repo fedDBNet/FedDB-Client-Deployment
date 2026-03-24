@@ -244,16 +244,19 @@ def patch_nginx_server_name(nginx_conf_path: Path, server_name: str) -> None:
     a real domain is already present.
     """
     content = nginx_conf_path.read_text()
+    # Check if the pattern exists before attempting substitution
+    pattern = r'^(\s*server_name\s+).*?;\s*$'
+    if not re.search(pattern, content, flags=re.MULTILINE):
+        print(f"Warning: Could not find server_name directive in '{nginx_conf_path}'. nginx may not use the correct hostname.")
+        return
+    
     new_content = re.sub(
-        r'^(\s*server_name\s+).*?;\s*$',
+        pattern,
         rf'\g<1>{server_name};',
         content,
         count=1,
         flags=re.MULTILINE
     )
-    if new_content == content:
-        print(f"Warning: Could not find server_name directive in '{nginx_conf_path}'. nginx may not use the correct hostname.")
-        return
     nginx_conf_path.write_text(new_content)
 
 
@@ -658,7 +661,6 @@ def main():
     nginx_server_name = domain_obj.domain_name() if domain_obj is not None else exposed_address
     nginx_conf_path = FLNET_CLIENT_DIR / 'nginx.conf'
     patch_nginx_server_name(nginx_conf_path, str(nginx_server_name))
-
     if not write_env_file(
         FLNET_CLIENT_DIR / '.env',
         comments={
@@ -678,7 +680,7 @@ def main():
         COMPOSE_PROFILES="no-ssl" if not ssl_folder else "ssl",
         SSL_CERT_PUBLIC_KEY=str(fullchain_file) if fullchain_file else "dummyfile",
         SSL_CERT_PRIVATE_KEY=str(privkey_file) if privkey_file else "dummyfile",
-        FRONTEND_IMAGE=GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj.domain_name()), DEFAULT_FRONTEND_IMAGE)
+        FRONTEND_IMAGE=GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), DEFAULT_FRONTEND_IMAGE)
     ):
         sys.exit(1)
 
