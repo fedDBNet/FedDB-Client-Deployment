@@ -700,9 +700,11 @@ def main():
     print("3. Change the admin password immediately after logging in.")
     print("  If you have problems with the manage account page, please add + to the Web Origins of the account-console client in the master realm.")
     print("4. Change to the 'FLNet-Client' realm in Keycloak.")
-    print("5. Create a user there. Give him the appropiate group (e.g. 'Admin'). Users without a Group cannot access the FLNet Client!")
+    print("5. Create a user there. Give him the appropiate group (e.g. 'Admin') and tick is Email as verified. Users without a Group cannot access the FLNet Client!")
     print("6. If you want to have automatic updates: All containers are set with a watchtower label.")
     print("  More information: https://github.com/containrrr/watchtower")
+    print("For more information, please refer to the deployment documentation:")
+    print("https://federated-learning.net/documentation/docs/client-deployment-usage/deploy-client")
 
 if __name__ == '__main__':
     try:
