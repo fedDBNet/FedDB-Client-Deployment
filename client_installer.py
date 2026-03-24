@@ -18,14 +18,56 @@ OVERWRITE_SECRETS = False
 
 DEFAULT_PLATFORM_ADDRESS = "federated-learning.net"
 DEFAULT_PLATFORM_PROTOCOL = "https"
-DEFAULT_PLATFORM_PORT = "443"
 DEFAULT_FULL_GLOBAL_ADDRESS = f"{DEFAULT_PLATFORM_PROTOCOL}://{DEFAULT_PLATFORM_ADDRESS}"
-DEFAULT_PLATFORM_TCP_PORT = "9150"
+DEFAULT_PLATFORM_TCP_PORT = "9152"
+IMAGE_TAG = "latest"
+GLOBAL_DOMAIN_TO_IMAGE = {
+    "https://federated-learning.net": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:{IMAGE_TAG}",
+    "https://daibetes-net.cosy.bio": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-daibetes:{IMAGE_TAG}",
+    "https://daibetes-net.federated-learning.net": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-daibetes:{IMAGE_TAG}",
+    "https://microb-ai-net.cosy.bio": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-microbaiome:{IMAGE_TAG}",
+    "https://microb-ai-net.federated-learning.net": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-microbaiome:{IMAGE_TAG}",
+}
+DEFAULT_FRONTEND_IMAGE = f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:{IMAGE_TAG}"
 #TODO: as soon as the docs are deployed we can also link to them in this script!
 
 # ============================================================================
 # Helper Functions
 # ============================================================================
+class PredefinedConfiguration:
+    """
+    Contains some of the variables collected in this installer.
+    Each Instance of this class represents a predefined configuration
+    that the user can choose at the beginning of the installer.
+    Example is the predefined config for the daibetes/microbaiome projects
+    """
+    def __init__(self, name: str, global_domain: str, global_tcp_port: str):
+        self.name = name
+        self.global_domain = global_domain
+        self.global_tcp_port = global_tcp_port
+        self.frontend_image = GLOBAL_DOMAIN_TO_IMAGE.get(global_domain, DEFAULT_FRONTEND_IMAGE)
+        if global_domain not in GLOBAL_DOMAIN_TO_IMAGE:
+            print(f"Warning: No predefined frontend image for global domain '{global_domain}'. Using default image '{DEFAULT_FRONTEND_IMAGE}'.")
+            print("This will most likely only concern styling")
+
+FLNET_CONFIG = PredefinedConfiguration(
+    name="FLNet",
+    global_domain="https://federated-learning.net",
+    global_tcp_port="9152"
+)
+
+DAIBETES_CONFIG = PredefinedConfiguration(
+    name="Daibetes",
+    global_domain="https://daibetes-net.federated-learning.net",
+    global_tcp_port="9153"
+)
+
+MICROBAIOME_CONFIG = PredefinedConfiguration(
+    name="MicrobAIome",
+    global_domain="https://microb-ai-net.federated-learning.net",
+    global_tcp_port="9154"
+)
+
 def gen_secret(length: int = 64) -> str:
     """
     Generate a URL-safe random string of given length.
@@ -243,6 +285,43 @@ def validate_ip_address(ip: str) -> bool:
 def main():
     """Main installation/initialization workflow."""
     print("Starting the initialization of a FLNet Client...\n")
+    # All variables that will be set
+    exposed_address = None
+    exposed_ip_address = None
+    client_port = None
+    domain_obj = None
+    enable_ssl_termination_in_client = False
+    ssl_folder = None
+    ssl_path = None
+    fullchain_file = None
+    privkey_file = None
+    global_domain_obj = None
+    global_tcp_port = None
+    # ========================================================================
+    # 0. Preconfiguration: Ask if user wants to use an already defined
+    # configuration or do a fresh setup.
+    # vars: global_domain_obj, global_tcp_port (indirectly frontend image)
+    # ========================================================================
+    print("An FLNet Client is part of a network allowing privacy preserving federated learning across multiple organizations.")
+    print("Do you want to join a preexisting network?")
+    while True:
+        input_predefined_config = input("Enter the name of the network you want to join (flnet, daibetes, microbaiome) or enter own to join your own deployed network: ").strip()
+        normalized_input = input_predefined_config.lower()
+        if normalized_input not in ("flnet", "daibetes", "microbaiome", "own"):
+            print("Invalid input. Please enter 'flnet', 'daibetes', 'microbaiome' or 'own'.")
+            continue # continue getting input until valid
+        if normalized_input == "own":
+            print("Proceeding with custom configuration. You will be asked to provide the relevant parameters in the next steps.")
+            break # own config
+        else:
+            for config in (FLNET_CONFIG, DAIBETES_CONFIG, MICROBAIOME_CONFIG):
+                if normalized_input == config.name.lower():
+                    global_domain_obj = Domain(config.global_domain)
+                    global_tcp_port = config.global_tcp_port
+                    print(f"Joining the '{config.name}' network with global domain '{config.global_domain}' and TCP port '{config.global_tcp_port}'.")
+                    print(f"The installer will use the predefined frontend image '{config.frontend_image}' for this configuration.")
+                    break
+            break # predefined config selected
     # ========================================================================
     # 1. Which interface to listen on?
     # vars: exposed_address, client_port
@@ -251,9 +330,6 @@ def main():
     print("You can either only expose the client to this machine (localhost), or expose it to the internet/intranet.")
     print("If you expose to the internet, consider limiting access to your server to only your internal network or via a VPN for security reasons.")
     print("You can also set up SSL encryption for encrypted communication later in the setup.\n")
-    # localhost or 0.0.0.0
-    exposed_address = None
-    exposed_ip_address = None
     while True:
         exposed_address_input = input("\nPlease specify the address without port the FLNet Client should run on. We suggest to use 0.0.0.0 to open to the internet/intranet or localhost to only listen on this machine (default 127.0.0.1 if you just press Enter): ").strip().lower()
         if not exposed_address_input or exposed_address_input == "127.0.0.1":
@@ -268,7 +344,6 @@ def main():
         break
 
     # which port?
-    client_port = None
     while True:
         if exposed_address == "localhost" or exposed_address == "127.0.0.1":
             client_port_input = input(f"Please specify the port that the FLNet Client should listen on (default is 80): ").strip()
@@ -287,12 +362,10 @@ def main():
     # 2. Domain configuration including SSL
     # vars: domain_name, host_port, ssl_folder, fullchain_file, privkey_file
     # ========================================================================
-
     # Domain Name and host port retrieval loop
     print("You can optionally set the domain you are using for your FLNet Client.")
     print("This enables us to enforce CORS policies and improve security.")
     print("We also offer to do SSL termination if you provide the relevant SSL files.")
-    domain_obj = None
     while True:
         domain_input = input("If you setup a domain please specify the domain here with protocol (e.g., 'https://example.com:4200', 'http://example2.com', ...), or press Enter to skip: ").strip()
         if domain_input:
@@ -320,11 +393,6 @@ def main():
             break
 
     # Should the Client do the SSL termination?
-    enable_ssl_termination_in_client = False
-    ssl_folder = None
-    ssl_path = None
-    fullchain_file = None
-    privkey_file = None
     while domain_input:
         enable_ssl_termination_in_client_input = \
             input("Do you want to enable SSL termination in the FLNet Client by providing SSL certificate files? (y/n): ").strip().lower()
@@ -443,39 +511,37 @@ def main():
             print()
 
     print()
-
     # ========================================================================
     # 3. Which FLNet platform to connect to?
     # ========================================================================
 
     # Create default global domain object (443 is default for HTTPS, so not specified)
-    global_domain_obj = Domain(DEFAULT_FULL_GLOBAL_ADDRESS)
-    global_tcp_port = DEFAULT_PLATFORM_TCP_PORT
-
-    while True:
-        global_domain_input = input(f"Enter the FLNet platform address with protocol (e.g., 'https://platform.example.com'). Press Enter for default ({DEFAULT_FULL_GLOBAL_ADDRESS}): ").strip()
-        if not global_domain_input:
-            break  # use default already set
-
-        temp_global_domain_obj = Domain(global_domain_input)
-        if not temp_global_domain_obj.is_valid():
-            if not temp_global_domain_obj.protocol_is_valid():
-                print("ERROR: You must specify a protocol (http:// or https://).")
-            elif not temp_global_domain_obj.domain_is_valid():
-                print("ERROR: The domain name is not valid.")
-            elif not temp_global_domain_obj.port_is_valid():
-                print("ERROR: The port is not valid.")
-            continue
-
-        # overwrite default with valid input
-        global_domain_obj = temp_global_domain_obj
-        print(f"Connecting to FLNet platform at '{global_domain_obj}'.")
-        break
-
-    # get the tcp port if a different platform is used
-    if global_domain_obj.domain_name() != DEFAULT_PLATFORM_ADDRESS:
+    if not global_domain_obj: # wasnt set by predefined config
         while True:
-            global_tcp_port = input("Enter the TCP port of the global platform for relay connections (default 9150): ").strip()
+            global_domain_input = input(f"Enter the FLNet platform address with protocol (e.g., 'https://platform.example.com'). Press Enter for default ({DEFAULT_FULL_GLOBAL_ADDRESS}): ").strip()
+            if not global_domain_input:
+                global_domain_input = DEFAULT_FULL_GLOBAL_ADDRESS
+                break
+
+            temp_global_domain_obj = Domain(global_domain_input)
+            if not temp_global_domain_obj.is_valid():
+                if not temp_global_domain_obj.protocol_is_valid():
+                    print("ERROR: You must specify a protocol (http:// or https://).")
+                elif not temp_global_domain_obj.domain_is_valid():
+                    print("ERROR: The domain name is not valid.")
+                elif not temp_global_domain_obj.port_is_valid():
+                    print("ERROR: The port is not valid.")
+                continue
+
+            # overwrite default with valid input
+            global_domain_obj = temp_global_domain_obj
+            print(f"Connecting to FLNet platform at '{global_domain_obj}'.")
+            break
+
+    # get the tcp port
+    if not global_tcp_port: # wasnt set by predefined config
+        while True:
+            global_tcp_port = input(f"Enter the TCP port of the global platform for relay connections (default {DEFAULT_PLATFORM_TCP_PORT}): ").strip()
             if not global_tcp_port:
                 global_tcp_port = DEFAULT_PLATFORM_TCP_PORT
                 break
@@ -484,8 +550,8 @@ def main():
             else:
                 print(f"The port '{global_tcp_port}' is not valid. Please enter a number between 1 and 65535.")
     print()
-
- # ========================================================================
+    assert global_domain_obj is not None, "Global domain object should be set at this point. Script error."
+    # ========================================================================
     # 4. Generate Secrets
     # ========================================================================
     print("Securely generating database secrets...\n")
@@ -561,7 +627,8 @@ def main():
         # nginx forwards the original Host header ($host) to backends, which contains no protocol.
         deployed_on_domain = domain_obj.domain_name()
         if not domain_obj.is_default_port():
-            deployed_on_domain += f":{domain_obj.port()}"
+            assert domain_obj is not None, "Domain object should not be None here. Script error."
+            deployed_on_domain += f":{str(domain_obj.port())}"
     else:
         # No domain - use exposed address with http
         port_suffix = f":{client_port}" if client_port != "80" else ""
@@ -590,7 +657,7 @@ def main():
     # matching, so including the port here would prevent any request from matching.
     nginx_server_name = domain_obj.domain_name() if domain_obj is not None else exposed_address
     nginx_conf_path = FLNET_CLIENT_DIR / 'nginx.conf'
-    patch_nginx_server_name(nginx_conf_path, nginx_server_name)
+    patch_nginx_server_name(nginx_conf_path, str(nginx_server_name))
 
     if not write_env_file(
         FLNET_CLIENT_DIR / '.env',
@@ -611,6 +678,7 @@ def main():
         COMPOSE_PROFILES="no-ssl" if not ssl_folder else "ssl",
         SSL_CERT_PUBLIC_KEY=str(fullchain_file) if fullchain_file else "dummyfile",
         SSL_CERT_PRIVATE_KEY=str(privkey_file) if privkey_file else "dummyfile",
+        FRONTEND_IMAGE=GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj.domain_name()), DEFAULT_FRONTEND_IMAGE)
     ):
         sys.exit(1)
 

@@ -104,7 +104,7 @@ services:
       - local-learning-network
 
   instance-manager-frontend:
-    image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:latest
+    image: ${FRONTEND_IMAGE:-gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:latest}
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
     depends_on:
