@@ -205,7 +205,6 @@ services:
       - env/keycloak-secrets.env
     environment:
       - KC_DB=postgres
-      - KC_BOOTSTRAP_ADMIN_USERNAME=keycloak-admin
       - KC_DB_URL_DATABASE=keycloak
       - KC_DB_SCHEMA=public
       - KC_DB_URL=jdbc:postgresql://keycloak-postgres/keycloak

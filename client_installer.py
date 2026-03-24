@@ -29,7 +29,7 @@ GLOBAL_DOMAIN_TO_IMAGE = {
     "https://microb-ai-net.federated-learning.net": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-microbaiome:{IMAGE_TAG}",
 }
 DEFAULT_FRONTEND_IMAGE = f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:{IMAGE_TAG}"
-#TODO: as soon as the docs are deployed we can also link to them in this script!
+DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME = "keycloak-admin"
 
 # ============================================================================
 # Helper Functions
@@ -249,7 +249,7 @@ def patch_nginx_server_name(nginx_conf_path: Path, server_name: str) -> None:
     if not re.search(pattern, content, flags=re.MULTILINE):
         print(f"Warning: Could not find server_name directive in '{nginx_conf_path}'. nginx may not use the correct hostname.")
         return
-    
+
     new_content = re.sub(
         pattern,
         rf'\g<1>{server_name};',
@@ -610,6 +610,7 @@ def main():
     keycloak_secrets_file = FLNET_CLIENT_ENV_DIR / 'keycloak-secrets.env'
     if not write_env_file(
         keycloak_secrets_file,
+        KC_BOOTSTRAP_ADMIN_USERNAME=DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME,
         POSTGRES_PASSWORD=keycloak_db_password,
         KC_DB_PASSWORD=keycloak_db_password,
         KC_BOOTSTRAP_ADMIN_PASSWORD=keycloak_bootstrap_admin_password,
@@ -694,7 +695,7 @@ def main():
     print("After starting, you need to perform the following steps to finalize the setup:")
     print(f"1. Access the Keycloak admin console at {deployed_on_address}/auth/")
     print("2. Login with the temporary admin credentials:")
-    print("  Username: keycloak-admin")
+    print(f"  Username: {DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME} (see keycloak-secrets.env)")
     print(f"  Password: {keycloak_bootstrap_admin_password}")
     print("3. Change the admin password immediately after logging in.")
     print("  If you have problems with the manage account page, please add + to the Web Origins of the account-console client in the master realm.")
