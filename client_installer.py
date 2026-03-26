@@ -625,23 +625,6 @@ def main():
     # ========================================================================
     # 5. Patch nginx.conf and save the final .env file
     # ========================================================================
-    if domain_obj is not None:
-        deployed_on_address = str(domain_obj)
-        # DEPLOYED_ON_DOMAIN: bare hostname[:port] without protocol, for Django ALLOWED_HOSTS.
-        # nginx forwards the original Host header ($host) to backends, which contains no protocol.
-        deployed_on_domain = domain_obj.domain_name()
-        if not domain_obj.is_default_port():
-            assert domain_obj is not None, "Domain object should not be None here. Script error."
-            deployed_on_domain += f":{str(domain_obj.port())}"
-    else:
-        # No domain - use exposed address with http
-        port_suffix = f":{client_port}" if client_port != "80" else ""
-        deployed_on_address = f"http://{exposed_address}{port_suffix}"
-        # For ALLOWED_HOSTS: include port only if non-standard
-        deployed_on_domain = exposed_address
-        if client_port not in ("80", "443"):
-            deployed_on_domain += f":{client_port}"
-
     # Build global URLs based on global_domain_obj
     global_protocol = global_domain_obj.protocol()
     global_ws_protocol = "wss" if global_protocol == "https" else "ws"
@@ -655,13 +638,21 @@ def main():
 
     global_base_with_port = f"{global_domain_name}{global_port_suffix}"
 
-    # Bake the domain into nginx.conf directly — no envsubst or shell needed at runtime.
-    # On re-runs the regex replaces whatever value is already there.
-    # server_name uses bare hostname only: nginx strips the port from the Host header before
-    # matching, so including the port here would prevent any request from matching.
-    nginx_server_name = domain_obj.domain_name() if domain_obj is not None else exposed_address
+    # Set the complete domain with protocol and port as well as the bare domain
+    # bare domain is required as ALLOWED_HOSTS in Django
+    # as well as server_name in nginx
+    # we set this in nginx via patching the nginx.conf
+    if domain_obj is not None:
+        deployed_on_address = str(domain_obj)
+        deployed_on_domain = domain_obj.domain_name()
+    else:
+        # No domain - use exposed address with http
+        port_suffix = f":{client_port}" if client_port != "80" else ""
+        deployed_on_address = f"http://{exposed_address}{port_suffix}"
+        deployed_on_domain = exposed_address
+
     nginx_conf_path = FLNET_CLIENT_DIR / 'nginx.conf'
-    patch_nginx_server_name(nginx_conf_path, str(nginx_server_name))
+    patch_nginx_server_name(nginx_conf_path, str(deployed_on_domain))
     if not write_env_file(
         FLNET_CLIENT_DIR / '.env',
         comments={
