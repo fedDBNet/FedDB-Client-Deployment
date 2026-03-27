@@ -6,6 +6,7 @@ initializes secrets.
 Leaves the user with instructions on how to then start and setup their FLNet Client.
 """
 import re
+from typing import Optional
 import secrets
 import string
 import sys
@@ -14,7 +15,6 @@ from pathlib import Path
 BASE_DIR_INSTALLER_SCRIPT = Path(__file__).resolve().parent
 FLNET_CLIENT_DIR = BASE_DIR_INSTALLER_SCRIPT / 'FLNet_client'
 FLNET_CLIENT_ENV_DIR = FLNET_CLIENT_DIR / 'env'
-OVERWRITE_SECRETS = False
 
 DEFAULT_PLATFORM_ADDRESS = "federated-learning.net"
 DEFAULT_PLATFORM_PROTOCOL = "https"
@@ -78,26 +78,29 @@ def gen_secret(length: int = 64) -> str:
     return ''.join(secrets.choice(alphabet) for _ in range(length))
 
 
-def write_env_file(filepath: Path, comments: dict = None, **variables) -> bool:
+def write_env_file(filepath: Path, comments: Optional[dict] = None, skip_when_exists: bool = False, **variables) -> bool:
     """
     Write environment variables to a file with overwrite protection.
 
     Args:
         filepath: Path to the .env file
         comments: Optional dict mapping variable names to comment lines prepended before that variable
+        skip_when_exists: If True, skip writing if the file already exists
         **variables: Key-value pairs to write (VAR=value format)
 
     Returns:
         True if successful, False if user aborted
     """
-    global OVERWRITE_SECRETS
-    if filepath.exists() and not OVERWRITE_SECRETS:
-        print(f"Warning: The secrets file '{filepath}' already exists. Overwriting most likely breaks existing deployments. If you've already started a FLNet Client once, please be cautious.")
-        confirm = input("Do you want to continue and overwrite the secrets? (y/n): ").strip().lower()
-        if confirm not in ('y', 'yes'):
-            print("Initialization aborted by user.")
-            return False
-        OVERWRITE_SECRETS = True  # Avoid multiple prompts in one run
+    if filepath.exists():
+        if skip_when_exists:
+            print(f"Info: The file '{filepath}' already exists. Skipping.")
+            return True
+        else:
+            print(f"Warning: The file '{filepath}' already exists. Are you sure you want to overwrite it? (y/n): ")
+            confirm = input().strip().lower()
+            if confirm not in ('y', 'yes'):
+                print(f"Skipping writing to '{filepath}'")
+                return False
 
     # Ensure parent directory exists
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -567,6 +570,7 @@ def main():
     dataimport_secrets_file = FLNET_CLIENT_ENV_DIR / 'dataimport-secrets.env'
     if not write_env_file(
         dataimport_secrets_file,
+        skip_when_exists=True,
         MYSQL_PASSWORD=importer_db_password,
         MYSQL_ROOT_PASSWORD=importer_db_root_password,
         SQL_PASSWORD=importer_db_password,
@@ -581,6 +585,7 @@ def main():
     orch_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'orch-secrets.env'
     if not write_env_file(
         orch_api_secrets_file,
+        skip_when_exists=True,
         POSTGRES_PASSWORD=orch_db_password,
         QUARKUS_DATASOURCE_PASSWORD=orch_db_password
     ):
@@ -593,6 +598,7 @@ def main():
     learning_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'local-learning-secrets.env'
     if not write_env_file(
         learning_api_secrets_file,
+        skip_when_exists=True,
         POSTGRES_PASSWORD=learning_db_password,
         QUARKUS_DATASOURCE_PASSWORD=learning_db_password,
         QUARKUS_OIDC_CREDENTIALS_SECRET=learning_api_client_secret,
@@ -610,6 +616,7 @@ def main():
     keycloak_secrets_file = FLNET_CLIENT_ENV_DIR / 'keycloak-secrets.env'
     if not write_env_file(
         keycloak_secrets_file,
+        skip_when_exists=True,
         KC_BOOTSTRAP_ADMIN_USERNAME=DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME,
         POSTGRES_PASSWORD=keycloak_db_password,
         KC_DB_PASSWORD=keycloak_db_password,
@@ -658,6 +665,7 @@ def main():
         comments={
             'DEPLOYED_ON_ADDRESS': 'WARNING: Changing DEPLOYED_ON_ADDRESS or DEPLOYED_ON_DOMAIN here will NOT update the nginx server_name. Re-run the installer to regenerate nginx.conf with the new domain.',
         },
+        skip_when_exists=False,
         EXPOSED_IP_ADDRESS=exposed_ip_address,
             # IP address for docker binding (docker doesn't understand 'localhost')
         EXPOSED_PORT=client_port,
