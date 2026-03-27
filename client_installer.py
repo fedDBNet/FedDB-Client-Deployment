@@ -96,11 +96,7 @@ def write_env_file(filepath: Path, comments: Optional[dict] = None, skip_when_ex
             print(f"Info: The file '{filepath}' already exists. Skipping.")
             return True
         else:
-            print(f"Warning: The file '{filepath}' already exists. Are you sure you want to overwrite it? (y/n): ")
-            confirm = input().strip().lower()
-            if confirm not in ('y', 'yes'):
-                print(f"Skipping writing to '{filepath}'")
-                return False
+            print(f"Warning: The file '{filepath}' already exists. Overwriting with new settings.")
 
     # Ensure parent directory exists
     filepath.parent.mkdir(parents=True, exist_ok=True)
