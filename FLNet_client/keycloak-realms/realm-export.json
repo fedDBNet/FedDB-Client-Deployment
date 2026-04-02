@@ -829,6 +829,7 @@
       "alwaysDisplayInConsole": false,
       "clientAuthenticatorType": "client-secret",
       "redirectUris": [
+        "${FRONTEND_BASE_URL}",
         "${FRONTEND_BASE_URL}/*"
       ],
       "webOrigins": [
