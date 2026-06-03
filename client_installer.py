@@ -348,14 +348,15 @@ def main():
         print("Optionally, the same network can also be used for federated queries and learning (asked next).")
         print()
         print("Do you want to:")
-        print("- join a preexisting network (join)")
-        print("- join a self-deployed network (own)")
-        input_preconfiguration = input("Enter 'join', 'own' or 'none': ").strip().lower()
-        if input_preconfiguration not in ("join", "own", "none"):
-            print("Invalid input. Please enter 'join', 'own' or 'none'.")
+        print("1. join a preexisting network (join)")
+        print("2. join a self-deployed network (own)")
+        print("You can later chose to not participate in federation and only use the network to read-only access the app registry and data schemas.")
+        input_preconfiguration = input("Enter '1' or '2' : ").strip().lower()
+        if input_preconfiguration not in ("1", "2"):
+            print("Invalid input. Please enter '1' or '2'.")
             continue
 
-        if input_preconfiguration == "join":
+        if input_preconfiguration == "1":
             input_predefined_config = input("Enter the name of the network you want to join (flnet, daibetes, microbaiome): ").strip()
             normalized_input = input_predefined_config.lower()
             if normalized_input not in ("flnet", "daibetes", "microbaiome"):
@@ -369,7 +370,7 @@ def main():
                     print(f"The installer will use the predefined frontend image '{config.frontend_image}'.")
                     break
 
-        elif input_preconfiguration == "own":
+        elif input_preconfiguration == "2":
             print("You chose to join your own self-deployed network.")
             print("Make sure the global platform is up and running before continuing.")
             while True:
