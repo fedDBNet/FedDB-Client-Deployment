@@ -779,6 +779,7 @@ def main():
         print("Before starting, you MUST generate your self-signed certificates:")
         print(f"  python3 {BASE_DIR_INSTALLER_SCRIPT / 'create_self_signed_certs_config.py'}")
         print(f"  {BASE_DIR_INSTALLER_SCRIPT / 'create_self_signed_certs.sh'}")
+        print("   You MUST also comment out the HSTS header in FLNet_client/nginx_conf_HTTPS.conf or disable HSTS in your browser for the domain to avoid issues with self-signed certs, otherwise the browser accessing the Client will refuse to let you visit the site!")
         print("")
     print(f"cd {FLNET_CLIENT_DIR}")
     print("docker compose up -d\n")
