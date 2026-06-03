@@ -354,8 +354,8 @@ def main():
         print("Optionally, the same network can also be used for federated queries and learning (asked next).")
         print()
         print("Do you want to:")
-        print("1. join a preexisting network (join)")
-        print("2. join a self-deployed network (own)")
+        print("1. join a preexisting network")
+        print("2. join a self-deployed network")
         print("You can later chose to not participate in federation and only use the network to read-only access the app registry and data schemas.")
         input_preconfiguration = input("Enter '1' or '2' : ").strip().lower()
         if input_preconfiguration not in ("1", "2"):
