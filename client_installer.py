@@ -65,9 +65,15 @@ DAIBETES_CONFIG = PredefinedConfiguration(
 
 MICROBAIOME_CONFIG = PredefinedConfiguration(
     name="MicrobAIome",
-    global_domain="https://federated-learning.invalid",
-    global_tcp_port="0"
+    global_domain="https://microb-ai-net.federated-learning.net",
+    global_tcp_port="9154"
 )
+
+PREDEFINED_NETWORKS = {
+    "1": FLNET_CONFIG,
+    "2": MICROBAIOME_CONFIG,
+    "3": DAIBETES_CONFIG,
+}
 
 def gen_secret(length: int = 64) -> str:
     """
@@ -357,18 +363,20 @@ def main():
             continue
 
         if input_preconfiguration == "1":
-            input_predefined_config = input("Enter the name of the network you want to join (flnet, daibetes, microbaiome): ").strip()
-            normalized_input = input_predefined_config.lower()
-            if normalized_input not in ("flnet", "daibetes", "microbaiome"):
-                print("Invalid input. Please enter 'flnet', 'daibetes', 'microbaiome'")
+            print("Enter the number of the network you want to join:")
+            print("1. flnet")
+            print("2. microbaiome")
+            print("3. daibetes")
+            input_predefined_config = input("Enter '1', '2' or '3': ").strip().lower()
+            if input_predefined_config not in PREDEFINED_NETWORKS:
+                print("Invalid input. Please enter '1', '2' or '3'")
                 continue
-            for config in (FLNET_CONFIG, DAIBETES_CONFIG, MICROBAIOME_CONFIG):
-                if normalized_input == config.name.lower():
-                    global_domain_obj = Domain(config.global_domain)
-                    global_tcp_port = config.global_tcp_port
-                    print(f"Joining the '{config.name}' network at '{config.global_domain}' (TCP port {config.global_tcp_port}).")
-                    print(f"The installer will use the predefined frontend image '{config.frontend_image}'.")
-                    break
+
+            config = PREDEFINED_NETWORKS[input_predefined_config]
+            global_domain_obj = Domain(config.global_domain)
+            global_tcp_port = config.global_tcp_port
+            print(f"Joining the '{config.name}' network at '{config.global_domain}' (TCP port {config.global_tcp_port}).")
+            print(f"The installer will use the predefined frontend image '{config.frontend_image}'.")
 
         elif input_preconfiguration == "2":
             print("You chose to join your own self-deployed network.")
