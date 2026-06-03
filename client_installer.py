@@ -518,7 +518,7 @@ def main():
             print(f"Self-signed certificate paths set:")
             print(f"  Certificate : {fullchain_file}")
             print(f"  Private key : {privkey_file}")
-            print("IMPORTANT: The certificate files do not exist yet.")
+            print("IMPORTANT: If you didn't specifically create any certificates already, the certificate files do not exist yet.")
             print("  Before running 'docker compose up', you MUST:")
             print("  Either generate the certs yourself or use the helper:")
             print("  python3 create_self_signed_certs.py")
