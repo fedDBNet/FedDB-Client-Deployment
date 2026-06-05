@@ -13,3 +13,6 @@ __pycache__/
 # Only san.cnf.template is tracked; all other files in this folder are ignored
 FLNet_client/self_signed_certs/*
 !FLNet_client/self_signed_certs/san.cnf.template
+
+# created instructions file for client deployment
+client_startup_instructions.txt

@@ -774,35 +774,41 @@ def main():
         FRONTEND_IMAGE=GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), DEFAULT_FRONTEND_IMAGE)
     ):
         sys.exit(1)
-    keycloak_secrets_dict = env_file_to_dict(keycloak_secrets_file)
-    keycloak_username = keycloak_secrets_dict.get("KC_BOOTSTRAP_ADMIN_USERNAME")
-    keycloak_password = keycloak_secrets_dict.get("KC_BOOTSTRAP_ADMIN_PASSWORD")
-
     # ========================================================================
     # 6. Installation Summary
     # ========================================================================
-    print("⚠️")
-    print("The FL-Net Client is not started yet. To start it, please do the following:\n")
+    self_signed_startup_instructions = ""
     if use_self_signed_certs:
-        print("Before starting, you MUST generate your self-signed certificates:")
-        print(f"  python3 {BASE_DIR_INSTALLER_SCRIPT / 'create_self_signed_certs.py'}")
-        print("   You MUST also comment out the HSTS header in FLNet_client/nginx_conf_HTTPS.conf or disable HSTS in your browser for the domain to avoid issues with self-signed certs, otherwise the browser accessing the Client will refuse to let you visit the site!")
-        print("")
-    print(f"cd {FLNET_CLIENT_DIR}")
-    print("docker compose up -d\n")
-    print("After starting, you need to perform the following steps to finalize the setup:")
-    print(f"1. Access the Keycloak admin console at {deployed_on_address}/auth/")
-    print("2. Login with the temporary admin credentials:")
-    print(f"  Username: {keycloak_username}")
-    print(f"  Password: {keycloak_password}")
-    print("3. Change the admin password immediately after logging in.")
-    print("  If you have problems with the manage account page, please add + to the Web Origins of the account-console client in the master realm.")
-    print("4. Change to the 'FL-Net-Client' realm in Keycloak.")
-    print("5. Create a user there. Give him the appropiate group (e.g. 'Admin') and tick is Email as verified. Users without a Group cannot access the FL-Net Client!")
-    print("6. If you want to have automatic updates: All containers are set with a watchtower label.")
-    print("  More information: https://github.com/containrrr/watchtower")
-    print("For more information, please refer to the deployment documentation:")
-    print("https://federated-learning.net/documentation/docs/client-deployment-usage/deploy-client")
+        self_signed_startup_instructions = (
+            "\nBefore starting, you MUST generate your self-signed certificates:\n"
+            f"  python3 {BASE_DIR_INSTALLER_SCRIPT / 'create_self_signed_certs.py'}\n"
+            "  You MUST also comment out the HSTS header in FLNet_client/nginx_conf_HTTPS.conf or disable HSTS in your browser for the domain to avoid issues with self-signed certs, otherwise the browser accessing the Client will refuse to let you visit the site!\n"
+        )
+
+    client_startup_instructions = (
+        "The FL-Net Client is not started yet. To start it, please do the following:\n\n"
+        f"cd {FLNET_CLIENT_DIR}\n"
+        "docker compose up -d\n"
+        f"{self_signed_startup_instructions}"
+        "\nAfter starting, you need to perform the following steps to finalize the setup:\n"
+        f"1. Access the Keycloak admin console at {deployed_on_address}/auth/\n"
+        "2. Find the temporary admin credentials in FLNet_client/env/keycloak-secrets.env\n"
+        "3. Change the admin password immediately after logging in.\n"
+        "  If you have problems with the manage account page, please add + to the Web Origins of the account-console client in the master realm.\n"
+        "4. Change to the 'FL-Net-Client' realm in Keycloak.\n"
+        "5. Create a user there. Give him the appropiate group (e.g. 'Admin'). Users without a Group cannot access the FL-Net Client!\n"
+        "6. If you want to have automatic updates: All containers are set with a watchtower label. You can simply add a watchtower contaner to the docker compose file.\n"
+        "  More information: https://github.com/containrrr/watchtower\n"
+        "For more information, please refer to the deployment documentation:\n"
+        "https://federated-learning.net/documentation/docs/client-deployment-usage/deploy-client\n"
+    )
+
+    client_startup_instructions_file = BASE_DIR_INSTALLER_SCRIPT / 'client_startup_instructions.txt'
+    client_startup_instructions_file.write_text(client_startup_instructions)
+
+    print("⚠️")
+    print(client_startup_instructions)
+    print(f"A copy of these startup instructions was written to {client_startup_instructions_file}.")
 
 if __name__ == '__main__':
     try:
