@@ -259,6 +259,12 @@ class Domain:
             return True
         return False
 
+    def is_ip_address(self) -> bool:
+        """Check if the domain name is an IP address rather than a hostname."""
+        if not self._domain_is_valid or self._domain_name is None:
+            return False
+        return validate_ip_address(self._domain_name)
+
     def __str__(self) -> str:
         """Return the full domain string with protocol and port."""
         if not self.is_valid():
@@ -778,6 +784,7 @@ def main():
     # 6. Installation Summary
     # ========================================================================
     self_signed_startup_instructions = ""
+    additional_instructions = ""
     if use_self_signed_certs:
         self_signed_startup_instructions = (
             "\nBefore starting, you MUST generate your self-signed certificates:\n"
@@ -785,12 +792,29 @@ def main():
             "  You MUST also comment out the HSTS header in FLNet_client/nginx_conf_HTTPS.conf or disable HSTS in your browser for the domain to avoid issues with self-signed certs, otherwise the browser accessing the Client will refuse to let you visit the site!\n"
         )
 
+    if domain_obj is not None and domain_obj.protocol() == 'https' and domain_obj.is_ip_address():
+        additional_instructions = (
+            "You are using an IP address as the domain using HTTPS.\n"
+            "The NGINX config is NOT setup for this as this is somewhat unusual.\n"
+            "NGINX cannot correctly find the right server block (the right configuration) for IP addresses.\n"
+            "The steps below reassign 'default_server' to the SSL block so NGINX starts cleanly.\n"
+            "Please perform the following manual steps:\n"
+            f"1. Go to the client directory: cd {FLNET_CLIENT_DIR}\n"
+            "2. Open the file nginx.conf in a text editor.\n"
+            "You need to comment out/remove the default server block at the end of the file:\n"
+            "You can find it via the searching for 'listen 443 ssl default_server;'"
+            "3. Open the file nginx_conf_HTTPS.conf in a text editor.\n"
+            "You need to add to the listen directive the default_server flag."
+            "Change 'listen 443 ssl;' to 'listen 443 ssl default_server;'"
+        )
+
     client_startup_instructions = (
         "The FL-Net Client is not started yet. To start it, please do the following:\n\n"
         f"cd {FLNET_CLIENT_DIR}\n"
         "docker compose up -d\n"
-        f"{self_signed_startup_instructions}"
-        "\nAfter starting, you need to perform the following steps to finalize the setup:\n"
+        f"{self_signed_startup_instructions}\n"
+        f"{additional_instructions}\n"
+        "After starting, you need to perform the following steps to finalize the setup:\n"
         f"1. Access the Keycloak admin console at {deployed_on_address}/auth/\n"
         "2. Find the temporary admin credentials in FLNet_client/env/keycloak-secrets.env\n"
         "3. Change the admin password immediately after logging in.\n"
