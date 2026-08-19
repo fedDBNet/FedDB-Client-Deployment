@@ -28,7 +28,7 @@ services:
       - local-learning-network
 
   orch-api-db:
-    image:  postgres:17.5
+    image:  postgres:18.4
     restart: always
     environment:
       - POSTGRES_DB=local-learning-management
@@ -84,7 +84,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   local-learning-api-db:
-    image:  postgres:17.5
+    image:  postgres:18.4
     restart: always
     environment:
       - POSTGRES_DB=local-learning-management
@@ -130,8 +130,6 @@ services:
       - "com.centurylinklabs.watchtower.enable=true"
     networks:
       - local-learning-network
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.5
@@ -186,7 +184,7 @@ services:
         condition: service_healthy
 
   keycloak-postgres:
-    image: postgres:17.5
+    image: postgres:18.4
     restart: always
     volumes:
       - keycloak_postgres_volume:/var/lib/postgresql/data
@@ -277,7 +275,6 @@ volumes:
   orch-data-volume:
     name: ${COMPOSE_PROJECT_NAME}_orch-data
   orch-api-db-volume:
-  dataimport-files-volume:
 
 networks:
   local-learning-network:
