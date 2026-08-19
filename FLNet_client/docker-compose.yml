@@ -80,8 +80,6 @@ services:
         condition: service_healthy
     networks:
       - local-learning-network
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
 
   local-learning-api-db:
     image:  postgres:18.4
