@@ -17,8 +17,6 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - orch-data-volume:/mnt/input:rw
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
     depends_on:
       orch-api-db:
         condition: service_healthy
@@ -72,7 +70,7 @@ services:
     - QUARKUS_OIDC_CLIENT_ID=local-learning-api
     - QUARKUS_KEYCLOAK_ADMIN_CLIENT_CLIENT_ID=local-learning-api
     labels:
-      - "com.centurylinklabs.watchtower.enable=true"
+      - "bio.cosy.featurecloud.tool-accessible=true"
     depends_on:
       local-learning-api-db:
         condition: service_healthy
@@ -102,8 +100,6 @@ services:
 
   instance-manager-frontend:
     image: ${FRONTEND_IMAGE:-gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:latest}
-    labels:
-      - "com.centurylinklabs.watchtower.enable=true"
     depends_on:
       local-learning-api:
         condition: service_started
@@ -125,7 +121,7 @@ services:
       keycloak:
         condition: service_healthy
     labels:
-      - "com.centurylinklabs.watchtower.enable=true"
+      - "bio.cosy.featurecloud.tool-accessible=true"
     networks:
       - local-learning-network
 
