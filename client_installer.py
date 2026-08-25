@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Initializes the FLNET_CLIENT_DIR as a FLNet Client on the current machine.
+Initializes the FLNET_CLIENT_DIR as a FL-Net Client on the current machine.
 Checks first for requirements, requests relevant parameters from the user and
 initializes secrets.
-Leaves the user with instructions on how to then start and setup their FLNet Client.
+Leaves the user with instructions on how to then start and setup their FL-Net Client.
 """
 import re
 from typing import Optional
@@ -357,13 +357,39 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
             return default
         print("Please answer with 'y' or 'n'.")
 
+def ask_choice(prompt: str, options: dict, default: str) -> str:
+    """Ask the user to pick one of several named options.
+    `options` maps what the user types -> the value that gets stored.
+    `default` is the stored value used when the user just presses enter."""
+    default_key = next(key for key, value in options.items() if value == default)
+    valid_inputs = list(options.keys()) + [""]
+    while True:
+        answer = get_validated_user_input(
+            prompt=f"{prompt} ({'/'.join(options.keys())}), default: {default_key}: ",
+            validation_func=lambda x: x in valid_inputs,
+            error_message=f"Invalid input. Please enter one of: {', '.join(options.keys())}.",
+            apply_lower=True,
+        )
+        return options[answer] if answer != "" else default
+
+
+def ask_int(prompt: str, default: int) -> int:
+    """Ask for a whole number, returning default if the user just presses enter."""
+    answer = get_validated_user_input(
+        prompt=f"{prompt} default: {default}: ",
+        validation_func=lambda x: x == "" or x.isdigit(),
+        error_message="Invalid input. Please enter a whole number.",
+        apply_lower=False
+        )
+    return int(answer) if answer != "" else default
+
 # ============================================================================
 # Main Installation Logic
 # ============================================================================
 
 def main():
     """Main installation/initialization workflow."""
-    print("Starting the initialization of a FLNet Client...\n")
+    print("Starting the initialization of a FL-Net Client...\n")
     # All variables that will be set
     exposed_address = None
     exposed_ip_address = None
@@ -384,7 +410,7 @@ def main():
     # ========================================================================
     network_defined = False
     while not network_defined:
-        print("An FLNet Client connects to a global network to access data schemas (standards) and")
+        print("An FL-Net Client connects to a global network to access data schemas (standards) and")
         print("the app registry (ETL helpers, federated learning apps).")
         print("When subscriping to a schema, the client informs the network that this schema is used and the network increments the subscription counter")
         print("Otherwise, this is a read only connection and no data from the client is sent")
@@ -466,38 +492,104 @@ def main():
                 print("Please answer with 'y' or 'n'.")
         network_defined = True
 
-        # Step C: Privacy settings - Should automatic-access permissions be enabled?
-        print("\nThe FLNet Client uses a permission system that controls which global network users can access certain resources on this client:")
+        # Step C: Privacy settings - Should automatic-access permissions be allowed to exist at all?
+        print("\nThe FL-Net Client uses a permission system that controls which global network users can access certain resources on this client:")
         print("  - Resources: federated queries, statistics, learning results, and metrics from executed federated learning runs.")
-        print("  - Users: these are users on the FLNet network you're joining, NOT local accounts on this machine. When a permission is created, it can be scoped to one specific user or opened up to any user.")
+        print("  - Users: these are users on the FL-Net network you're joining, NOT local accounts on this machine. When a permission is created, it can be scoped to one specific user or opened up to any user.")
         print("\nStatistics, learning results, and metrics require manual approval by default for every access request.")
-        print("Here, you can choose to allow 'automatic' permissions instead for these three resources — these skip manual approval and grant access as soon as they're created.")
-        print("(Note: enabling this only makes automatic permissions POSSIBLE. A client user still has to explicitly create one for it to take effect.)")
+        print("Here, you decide whether 'automatic' access is even allowed to exist for these three resources. If you say no here, no permission created later at any point will ever be able to skip manual approval for that resource.")
 
         automatic_statistics_permission_enabled = ask_yes_no(
-            "Allow automatic-access permissions for STATISTICS?"
+            "Should automatic-access permissions be allowed to exist at all for STATISTICS?"
         )
         automatic_learning_permission_enabled = ask_yes_no(
-            "Allow automatic-access permissions for LEARNING results?"
+            "Should automatic-access permissions be allowed to exist at all for LEARNING results?"
         )
         automatic_metrics_permission_enabled = ask_yes_no(
-            "Allow automatic-access permissions for METRICS?"
+            "Should automatic-access permissions be allowed to exist at all for METRICS?"
         )
 
-        # Step D: Privacy settings - Default permission created on Client creation
-        #print("\nFederated queries work differently: once a permission allows queries, access is granted automatically — there is no manual-approval step.")
-        #print("Instead, the permission configures privacy protections applied to the results: thresholding, rounding, and rate-limiting.")
+        # Step D: Privacy settings - default permission for new cohorts
+        print("\nRegarding this permission system, we support setting up a default permission that's created automatically for every new cohort on this client.")
+        print("This also configures the default handling of federated queries. ")
+
+        cohort_permission_enabled = ask_yes_no(
+            "Do you want to set up this default permission for every new cohort?", default=False
+        )
+
+        if cohort_permission_enabled:
+            global_user_id = get_validated_user_input(
+                prompt="Who is this default permission for? Give a specific FL-Net user ID, or leave blank for any user: ",
+                validation_func=lambda x: True,
+                error_message="",
+                apply_lower=False
+            )
+
+            if automatic_statistics_permission_enabled:
+                auto_statistics_access = ask_choice(
+                    "Should the default permission grant automatic access to STATISTICS? 'all' automatically approves every request; 'none' leaves every request requiring manual approval.",
+                    options={"all": "ALL", "none": "NONE"},
+                    default="NONE",
+                )
+            else:
+                auto_statistics_access = "NONE"
+
+            if automatic_metrics_permission_enabled:
+                auto_metrics_access = ask_choice(
+                    "Should the default permission grant automatic access to METRICS? 'all' automatically approves every request; 'none' leaves every request requiring manual approval.",
+                    options={"all": "ALL", "none": "NONE"},
+                    default="NONE",
+                )
+            else:
+                auto_metrics_access = "NONE"
+
+            if automatic_learning_permission_enabled:
+                print("(Note: learning access is never automatic for tools that require internet or host access — those always require manual approval, regardless of this setting or any other permissions)")
+                auto_learning_access = ask_choice(
+                    "Should the default permission grant automatic access to LEARNING results? 'all' automatically approves every request; 'certified' automatically approves only requests using certified tools; 'none' leaves every request requiring manual approval.",
+                    options={"all": "ALL", "none": "NONE", "certified": "CERTIFIED_APPS"},
+                    default="NONE",
+                )
+            else:
+                auto_learning_access = "NONE"
+
+            print("\nFederated queries work differently: once a permission allows queries, access is granted automatically — there is no manual-approval step.")
+            print("Instead, the permission configures privacy protections applied to the results: thresholding, rounding, and rate-limiting.")
+
+            is_allowed_to_query = ask_yes_no(
+                "Allow federated queries against this client's data?", default=True
+            )
+
+            if is_allowed_to_query:
+                query_retry_time = ask_int(
+                    "Minimum seconds between answering repeated queries (rate-limiting)?", default=3
+                )
+                query_sample_threshold = ask_int(
+                    "Minimum sample size required before a query is answered (thresholding)?", default=100
+                )
+            else:
+                query_retry_time = 3
+                query_sample_threshold = 100
+
+        else:
+            auto_learning_access = "NONE"
+            auto_statistics_access = "NONE"
+            auto_metrics_access = "NONE"
+            is_allowed_to_query = True
+            query_retry_time = 3
+            query_sample_threshold = 100
+            global_user_id = ""
 
     # ========================================================================
     # 1. Which interface to listen on?
     # vars: exposed_address, client_port
     # ========================================================================
-    print("A FLNet Client is accessed via the browser.")
+    print("A FL-Net Client is accessed via the browser.")
     print("You can either only expose the client to this machine (localhost), or expose it to the internet/intranet.")
     print("If you expose to the internet, consider limiting access to your server to only your internal network or via a VPN for security reasons.")
     print("You can also set up SSL encryption for encrypted communication later in the setup.\n")
     while True:
-        exposed_address_input = input("\nPlease specify the address without port the FLNet Client should run on. We suggest to use 0.0.0.0 to open to the internet/intranet or localhost to only listen on this machine (default 127.0.0.1 if you just press Enter): ").strip().lower()
+        exposed_address_input = input("\nPlease specify the address without port the FL-Net Client should run on. We suggest to use 0.0.0.0 to open to the internet/intranet or localhost to only listen on this machine (default 127.0.0.1 if you just press Enter): ").strip().lower()
         if not exposed_address_input or exposed_address_input == "127.0.0.1":
             # translate 127.0.0.1 to localhost
             exposed_address_input = "localhost"
@@ -512,16 +604,16 @@ def main():
     # which port?
     while True:
         if exposed_address == "localhost" or exposed_address == "127.0.0.1":
-            client_port_input = input(f"Please specify the port that the FLNet Client should listen on (default is 80): ").strip()
+            client_port_input = input(f"Please specify the port that the FL-Net Client should listen on (default is 80): ").strip()
             client_port = client_port_input or "80"
         else:
-            client_port_input = input(f"Please specify the port that the FLNet Client should listen on (default is 443): ").strip()
+            client_port_input = input(f"Please specify the port that the FL-Net Client should listen on (default is 443): ").strip()
             client_port = client_port_input or "443"
         if validate_port(client_port):
             break
         else:
             print(f"The port '{client_port}' is not valid. Please enter a number between 1 and 65535.")
-    print(f"Exposing the FLNet Client to {exposed_address}:{client_port}.\n")
+    print(f"Exposing the FL-Net Client to {exposed_address}:{client_port}.\n")
     print()
 
     # ========================================================================
@@ -529,7 +621,7 @@ def main():
     # vars: domain_name, host_port, ssl_files_given, fullchain_file, privkey_file
     # ========================================================================
     # Domain Name and host port retrieval loop
-    print("You can optionally set the domain you are using for your FLNet Client.")
+    print("You can optionally set the domain you are using for your FL-Net Client.")
     print("This enables us to enforce CORS policies and improve security.")
     print("We also offer to do SSL termination if you provide the relevant SSL files.")
     while True:
@@ -646,7 +738,7 @@ def main():
 
     # Warning 1: Exposed to network without SSL encryption
     if exposed_address != "localhost" and not ssl_files_given:
-        print("WARNING: The FLNet Client is exposed to a non localhost IP without SSL encryption.")
+        print("WARNING: The FL-Net Client is exposed to a non localhost IP without SSL encryption.")
         print("  This means all communication (including passwords) is unencrypted and potentially insecure!")
         # with HTTPS -> User just needs to ensure SSL termination is done externally
         if domain_obj and domain_obj.protocol() == 'https':
@@ -674,14 +766,14 @@ def main():
         print("WARNING: You specified HTTPS protocol but did not provide SSL certificates.")
         print("  Without SSL certificates, the client cannot serve HTTPS traffic directly.")
         print("  You MUST use an external reverse proxy (e.g., nginx, Caddy) to handle SSL termination.")
-        print("  Make sure to forward traffic from port 443 to the FLNet Client and handle SSL termination in the reverse proxy.")
-        print("  Furthermore make sure to preserve the Host header ($host) in the reverse proxy or the FLNet Client will not work properly!")
+        print("  Make sure to forward traffic from port 443 to the FL-Net Client and handle SSL termination in the reverse proxy.")
+        print("  Furthermore make sure to preserve the Host header ($host) in the reverse proxy or the FL-Net Client will not work properly!")
         input("Press Enter to continue...")
         print()
 
     # Warning 3: Domain with localhost exposure
     if domain_obj is not None and exposed_address == "localhost":
-        print("WARNING: You specified a domain name, but the FLNet Client is only listening on localhost.")
+        print("WARNING: You specified a domain name, but the FL-Net Client is only listening on localhost.")
         print(f"  Make sure you have a reverse proxy forwarding traffic from {str(domain_obj)} to localhost:{client_port} or use a reverse tunnel.")
         if ssl_files_given:
             print(f"  Additionally, you configured SSL certificates ('{fullchain_file}', '{privkey_file}') for localhost-only access.")
@@ -697,7 +789,7 @@ def main():
         if domain_obj.port() != client_port:
             print(f"WARNING: Port mismatch detected!")
             print(f"  Domain '{str(domain_obj)}' will receive traffic on port {domain_obj.port()}")
-            print(f"  But the FLNet Client is configured to listen on port {client_port}")
+            print(f"  But the FL-Net Client is configured to listen on port {client_port}")
             print(f"  Make sure you relay traffic from port {domain_obj.port()} to port {client_port} on the server.")
             print(f"  This is typically done via a reverse proxy (nginx, apache, etc.).")
             input("Press Enter to continue...")
@@ -838,6 +930,14 @@ def main():
         AUTOMATIC_COHORT_PERMISSION_METRICS=automatic_metrics_permission_enabled,
         AUTOMATIC_COHORT_PERMISSION_STATISTICS=automatic_statistics_permission_enabled,
         AUTOMATIC_COHORT_PERMISSION_LEARNING=automatic_learning_permission_enabled,
+        COHORT_PERMISSION_ENABLED=cohort_permission_enabled,
+        COHORT_PERMISSION_QUERY_RETRY_TIME=query_retry_time,
+        COHORT_PERMISSION_IS_ALLOWED_TO_QUERY=is_allowed_to_query,
+        COHORT_PERMISSION_QUERY_SAMPLE_THRESHOLD=query_sample_threshold,
+        COHORT_PERMISSION_GLOBAL_USER_ID=global_user_id,
+        COHORT_PERMISSION_AUTO_TRAINING_ACCESS=auto_learning_access,
+        COHORT_PERMISSION_AUTO_STATISTICS_ACCESS=auto_statistics_access,
+        COHORT_PERMISSION_AUTO_METRICS_ACCESS=auto_metrics_access,
     ):
         sys.exit(1)
     # ========================================================================
