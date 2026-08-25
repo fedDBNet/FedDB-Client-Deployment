@@ -14,6 +14,7 @@ services:
       - CONTAINER_NETWORK_NAMES=${COMPOSE_PROJECT_NAME}_local-learning-network
       - CONTAINER_FILE_TRANSFER_VOLUME_NAME=${COMPOSE_PROJECT_NAME}_orch-data
       - CONTAINER_FILE_TRANSFER_VOLUME_PATH=/mnt/input
+      - CONTAINER_NETWORK_PARTICIPANTS=flnet-local-learning-api,flnet-controller
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - orch-data-volume:/mnt/input:rw
@@ -46,6 +47,7 @@ services:
 
   local-learning-api:
     image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/global-learning-apis/local-learning-api:latest
+    container_name: flnet-local-learning-api
     restart: always
     pull_policy: always
     env_file:
@@ -123,6 +125,7 @@ services:
 
   controller:
     image: gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/feature-cloud-controller/controller:latest
+    container_name: flnet-controller
     environment:
       - WORKFLOW_LEARNING_API_WS_ADDRESS=ws://local-learning-api:8080
       - RELAY_ADDRESS_TCP=${GLOBAL_FEDERATION_HOST}:${GLOBAL_TCP_PORT}
