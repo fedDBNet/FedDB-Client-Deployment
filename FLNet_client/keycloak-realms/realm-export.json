@@ -530,7 +530,29 @@
   "webAuthnPolicyPasswordlessAvoidSameAuthenticatorRegister": false,
   "webAuthnPolicyPasswordlessAcceptableAaguids": [],
   "webAuthnPolicyPasswordlessExtraOrigins": [],
-  "users": [ ],
+  "users": [
+    {
+      "id": "228875fe-81bb-42ec-8949-bcbb19b7d50c",
+      "username": "service-account-local-learning-api",
+      "emailVerified": false,
+      "enabled": true,
+      "createdTimestamp": 1783677803445,
+      "totp": false,
+      "serviceAccountClientId": "local-learning-api",
+      "disableableCredentialTypes": [],
+      "requiredActions": [],
+      "realmRoles": [
+        "default-roles-flnet-client"
+      ],
+      "clientRoles": {
+        "realm-management": [
+          "view-users"
+        ]
+      },
+      "notBefore": 0,
+      "groups": []
+    }
+  ],
   "scopeMappings": [
     {
       "clientScope": "offline_access",
