@@ -341,6 +341,22 @@ def get_validated_user_input(prompt: str, validation_func, error_message: str, a
         else:
             print(error_message)
 
+def ask_yes_no(prompt: str, default: bool = False) -> bool:
+    """Ask a yes/no question, returning default (False -> 'n') if the user just hits enter."""
+    default_label = "y" if default else "n"
+    while True:
+        answer = get_validated_user_input(
+            prompt=f"{prompt} (y/n), default: {default_label}: ",
+            validation_func=lambda x: x in ("y", "yes", "n", "no", ""),
+            error_message="Invalid input. Please enter 'y' or 'n'.",
+            apply_lower=True,
+        )
+        if answer in ("y", "yes"):
+            return True
+        if answer in ("n", "no", ""):
+            return default
+        print("Please answer with 'y' or 'n'.")
+
 # ============================================================================
 # Main Installation Logic
 # ============================================================================
@@ -450,58 +466,27 @@ def main():
                 print("Please answer with 'y' or 'n'.")
         network_defined = True
 
-        # Step C: Should automatic access style permissions be enabled?
-        print("\nThe FLNet Client can automatically grant access to certain resources, epsecifically federated statistics and learning as well as metrics of executed federated learning runs.")
-        print("This is handled by giving specifc global users (or any global user) a permission for automatic statistics/learning/metrics access.")
-        print("Do you want to enable these types of access permissions (A user of the Client still needs to create such a permission)?")
-        automatic_statistics_permission_enabled = False
-        automatic_learning_permission_enabled = False
-        automatic_metrics_permission_enabled = False
-        while True:
-            input_statistics_permission = get_validated_user_input(
-                prompt="Do you want to enable automatic statistics access permissions? (y/n), default: n: ",
-                validation_func=lambda x: x in ("y", "yes", "n", "no", ""),
-                error_message="Invalid input. Please enter 'y' or 'n'.",
-                apply_lower=True
-            )
-            if input_statistics_permission in ("y", "yes"):
-                automatic_statistics_permission_enabled = True
-                break
-            elif input_statistics_permission in ("n", "no", ""):
-                automatic_statistics_permission_enabled = False
-                break
-            else:
-                print("Please answer with 'y' or 'n'.")
-        while True:
-            input_learning_permission = get_validated_user_input(
-                prompt="Do you want to enable automatic learning access permissions? (y/n), default: n: ",
-                validation_func=lambda x: x in ("y", "yes", "n", "no", ""),
-                error_message="Invalid input. Please enter 'y' or 'n'.",
-                apply_lower=True
-            )
-            if input_learning_permission in ("y", "yes"):
-                automatic_learning_permission_enabled = True
-                break
-            elif input_learning_permission in ("n", "no", ""):
-                automatic_learning_permission_enabled = False
-                break
-            else:
-                print("Please answer with 'y' or 'n'.")
-        while True:
-            input_metrics_permission = get_validated_user_input(
-                prompt="Do you want to enable automatic metrics access permissions? (y/n), default: n: ",
-                validation_func=lambda x: x in ("y", "yes", "n", "no", ""),
-                error_message="Invalid input. Please enter 'y' or 'n'.",
-                apply_lower=True
-            )
-            if input_metrics_permission in ("y", "yes"):
-                automatic_metrics_permission_enabled = True
-                break
-            elif input_metrics_permission in ("n", "no", ""):
-                automatic_metrics_permission_enabled = False
-                break
-            else:
-                print("Please answer with 'y' or 'n'.")
+        # Step C: Privacy settings - Should automatic-access permissions be enabled?
+        print("\nThe FLNet Client uses a permission system that controls which global network users can access certain resources on this client:")
+        print("  - Resources: federated queries, statistics, learning results, and metrics from executed federated learning runs.")
+        print("  - Users: these are users on the FLNet network you're joining, NOT local accounts on this machine. When a permission is created, it can be scoped to one specific user or opened up to any user.")
+        print("\nStatistics, learning results, and metrics require manual approval by default for every access request.")
+        print("Here, you can choose to allow 'automatic' permissions instead for these three resources — these skip manual approval and grant access as soon as they're created.")
+        print("(Note: enabling this only makes automatic permissions POSSIBLE. A client user still has to explicitly create one for it to take effect.)")
+
+        automatic_statistics_permission_enabled = ask_yes_no(
+            "Allow automatic-access permissions for STATISTICS?"
+        )
+        automatic_learning_permission_enabled = ask_yes_no(
+            "Allow automatic-access permissions for LEARNING results?"
+        )
+        automatic_metrics_permission_enabled = ask_yes_no(
+            "Allow automatic-access permissions for METRICS?"
+        )
+
+        # Step D: Privacy settings - Default permission created on Client creation
+        #print("\nFederated queries work differently: once a permission allows queries, access is granted automatically — there is no manual-approval step.")
+        #print("Instead, the permission configures privacy protections applied to the results: thresholding, rounding, and rate-limiting.")
 
     # ========================================================================
     # 1. Which interface to listen on?
