@@ -326,6 +326,21 @@ def validate_ip_address(ip: str) -> bool:
             return False
     return True
 
+def get_validated_user_input(prompt: str, validation_func, error_message: str, apply_lower: bool) -> str:
+    """
+    Prompt the user for input and validate it using the provided validation_func.
+    Apply apply_lower to convert input to lowercase before validation if specified.
+    Keeps prompting until valid input is received.
+    """
+    while True:
+        user_input = input(prompt).strip()
+        if apply_lower:
+            user_input = user_input.lower()
+        if validation_func(user_input):
+            return user_input
+        else:
+            print(error_message)
+
 # ============================================================================
 # Main Installation Logic
 # ============================================================================
@@ -363,20 +378,24 @@ def main():
         print("1. join a preexisting network")
         print("2. join a self-deployed network")
         print("You can later chose to not participate in federation and only use the network to read-only access the app registry and data schemas.")
-        input_preconfiguration = input("Enter '1' or '2' : ").strip().lower()
-        if input_preconfiguration not in ("1", "2"):
-            print("Invalid input. Please enter '1' or '2'.")
-            continue
+        input_preconfiguration = get_validated_user_input(
+            prompt="Enter '1' or '2': ",
+            validation_func=lambda x: x in ("1", "2"),
+            error_message="Invalid input. Please enter '1' or '2'.",
+            apply_lower=True
+        )
 
         if input_preconfiguration == "1":
             print("Enter the number of the network you want to join:")
             print("1. flnet")
             print("2. microbaiome")
             print("3. daibetes")
-            input_predefined_config = input("Enter '1', '2' or '3': ").strip().lower()
-            if input_predefined_config not in PREDEFINED_NETWORKS:
-                print("Invalid input. Please enter '1', '2' or '3'")
-                continue
+            input_predefined_config = get_validated_user_input(
+                prompt="Enter '1', '2' or '3': ",
+                validation_func=lambda x: x in ("1", "2", "3"),
+                error_message="Invalid input. Please enter '1', '2' or '3'.",
+                apply_lower=True
+            )
 
             config = PREDEFINED_NETWORKS[input_predefined_config]
             global_domain_obj = Domain(config.global_domain)
@@ -430,6 +449,59 @@ def main():
             else:
                 print("Please answer with 'y' or 'n'.")
         network_defined = True
+
+        # Step C: Should automatic access style permissions be enabled?
+        print("\nThe FLNet Client can automatically grant access to certain resources, epsecifically federated statistics and learning as well as metrics of executed federated learning runs.")
+        print("This is handled by giving specifc global users (or any global user) a permission for automatic statistics/learning/metrics access.")
+        print("Do you want to enable these types of access permissions (A user of the Client still needs to create such a permission)?")
+        automatic_statistics_permission_enabled = False
+        automatic_learning_permission_enabled = False
+        automatic_metrics_permission_enabled = False
+        while True:
+            input_statistics_permission = get_validated_user_input(
+                prompt="Do you want to enable automatic statistics access permissions? (y/n), default: n: ",
+                validation_func=lambda x: x in ("y", "yes", "n", "no", ""),
+                error_message="Invalid input. Please enter 'y' or 'n'.",
+                apply_lower=True
+            )
+            if input_statistics_permission in ("y", "yes"):
+                automatic_statistics_permission_enabled = True
+                break
+            elif input_statistics_permission in ("n", "no", ""):
+                automatic_statistics_permission_enabled = False
+                break
+            else:
+                print("Please answer with 'y' or 'n'.")
+        while True:
+            input_learning_permission = get_validated_user_input(
+                prompt="Do you want to enable automatic learning access permissions? (y/n), default: n: ",
+                validation_func=lambda x: x in ("y", "yes", "n", "no", ""),
+                error_message="Invalid input. Please enter 'y' or 'n'.",
+                apply_lower=True
+            )
+            if input_learning_permission in ("y", "yes"):
+                automatic_learning_permission_enabled = True
+                break
+            elif input_learning_permission in ("n", "no", ""):
+                automatic_learning_permission_enabled = False
+                break
+            else:
+                print("Please answer with 'y' or 'n'.")
+        while True:
+            input_metrics_permission = get_validated_user_input(
+                prompt="Do you want to enable automatic metrics access permissions? (y/n), default: n: ",
+                validation_func=lambda x: x in ("y", "yes", "n", "no", ""),
+                error_message="Invalid input. Please enter 'y' or 'n'.",
+                apply_lower=True
+            )
+            if input_metrics_permission in ("y", "yes"):
+                automatic_metrics_permission_enabled = True
+                break
+            elif input_metrics_permission in ("n", "no", ""):
+                automatic_metrics_permission_enabled = False
+                break
+            else:
+                print("Please answer with 'y' or 'n'.")
 
     # ========================================================================
     # 1. Which interface to listen on?
@@ -777,7 +849,10 @@ def main():
         COMPOSE_PROFILES="no-ssl" if not ssl_files_given else "ssl",
         SSL_CERT_PUBLIC_KEY=str(fullchain_file) if fullchain_file else "dummyfile",
         SSL_CERT_PRIVATE_KEY=str(privkey_file) if privkey_file else "dummyfile",
-        FRONTEND_IMAGE=GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), DEFAULT_FRONTEND_IMAGE)
+        FRONTEND_IMAGE=GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), DEFAULT_FRONTEND_IMAGE),
+        AUTOMATIC_COHORT_PERMISSION_METRICS=automatic_metrics_permission_enabled,
+        AUTOMATIC_COHORT_PERMISSION_STATISTICS=automatic_statistics_permission_enabled,
+        AUTOMATIC_COHORT_PERMISSION_LEARNING=automatic_learning_permission_enabled,
     ):
         sys.exit(1)
     # ========================================================================
