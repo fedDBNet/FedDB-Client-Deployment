@@ -28,6 +28,13 @@ GLOBAL_DOMAIN_TO_IMAGE = {
     "https://microb-ai-net.cosy.bio": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-microbaiome:{IMAGE_TAG}",
     "https://microb-ai-net.federated-learning.net": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-microbaiome:{IMAGE_TAG}",
 }
+GLOBAL_DOMAIN_TO_AUTH_ENABLED_INFO = {
+    "https://federated-learning.net": True,
+    "https://daibetes-net.cosy.bio": False,
+    "https://daibetes-net.federated-learning.net": False,
+    "https://microb-ai-net.cosy.bio": False,
+    "https://microb-ai-net.federated-learning.net": False,
+}
 DEFAULT_FRONTEND_IMAGE = f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:{IMAGE_TAG}"
 DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME = "keycloak-admin"
 overwrite_existing_secrets = False
@@ -47,6 +54,7 @@ class PredefinedConfiguration:
         self.global_domain = global_domain
         self.global_tcp_port = global_tcp_port
         self.frontend_image = GLOBAL_DOMAIN_TO_IMAGE.get(global_domain, DEFAULT_FRONTEND_IMAGE)
+        self.auth_enabled = GLOBAL_DOMAIN_TO_AUTH_ENABLED_INFO.get(global_domain, True)
         if global_domain not in GLOBAL_DOMAIN_TO_IMAGE:
             print(f"Warning: No predefined frontend image for global domain '{global_domain}'. Using default image '{DEFAULT_FRONTEND_IMAGE}'.")
             print("This will most likely only concern styling")
@@ -404,9 +412,11 @@ def main():
     global_domain_obj = None
     global_tcp_port = None
     federated_learning_enabled = True
+    auth_enabled = True
     # ========================================================================
     # 0. Preconfiguration: Network and federation setup
-    # vars: global_domain_obj, global_tcp_port, federated_learning_enabled
+    # vars: global_domain_obj, global_tcp_port, federated_learning_enabled,
+    #   permission system settings, auth settings
     # ========================================================================
     network_defined = False
     while not network_defined:
@@ -442,6 +452,7 @@ def main():
             config = PREDEFINED_NETWORKS[input_predefined_config]
             global_domain_obj = Domain(config.global_domain)
             global_tcp_port = config.global_tcp_port
+            auth_enabled = GLOBAL_DOMAIN_TO_AUTH_ENABLED_INFO.get(config.global_domain, True)
             print(f"Joining the '{config.name}' network at '{config.global_domain}' (TCP port {config.global_tcp_port}).")
             print(f"The installer will use the predefined frontend image '{config.frontend_image}'.")
 
@@ -579,6 +590,15 @@ def main():
             query_retry_time = 3
             query_sample_threshold = 100
             global_user_id = ""
+
+        # Step E: Authentication settings
+        username = ""
+        password = ""
+        if auth_enabled:
+            print("\nThe FL-Net Client authorizes towards the FL-Net Platform. You should have created or received a user account on the platform before continuing.")
+            print("If this is not the case, please create an account on the platform first and then come back to this installer.")
+            username = input("Please enter your FL-Net Platform username: ").strip()
+            password = input("Please enter your FL-Net Platform password: ").strip()
 
     # ========================================================================
     # 1. Which interface to listen on?
@@ -834,7 +854,6 @@ def main():
     # --- learning-secrets ---
     learning_db_password = gen_secret()
     learning_api_client_secret = gen_secret()
-
     learning_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'local-learning-secrets.env'
     if not write_env_file(
         learning_api_secrets_file,
@@ -843,6 +862,8 @@ def main():
         QUARKUS_DATASOURCE_PASSWORD=learning_db_password,
         QUARKUS_OIDC_CREDENTIALS_SECRET=learning_api_client_secret,
         QUARKUS_KEYCLOAK_ADMIN_CLIENT_CLIENT_SECRET=learning_api_client_secret,
+        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_USERNAME=username,
+        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_PASSWORD=password,
       # see env/local-learning-secrets.env
     ):
         sys.exit(1)
@@ -877,6 +898,7 @@ def main():
     global_ws_protocol = "wss" if global_protocol == "https" else "ws"
     global_domain_name = global_domain_obj.domain_name()
     global_port = global_domain_obj.port()
+    assert global_protocol in ("http", "https"), "Global protocol must be either 'http' or 'https'."
 
     # Include port in URLs only if it's non-standard for the protocol
     global_port_suffix = ""
@@ -888,8 +910,10 @@ def main():
     # Federation host: real domain for WebSocket/relay when enabled, non-resolving otherwise
     if federated_learning_enabled:
         global_federation_host = global_domain_name
+        global_keycloak_url = global_protocol + "://" + global_base_with_port + "/auth/realms/FLNet-Platform"
     else:
         global_federation_host = "federated-learning.invalid"
+        global_keycloak_url = ""
 
     # Set the complete domain with protocol and port as well as the bare domain
     # bare domain is required as ALLOWED_HOSTS in Django
@@ -938,6 +962,8 @@ def main():
         COHORT_PERMISSION_AUTO_TRAINING_ACCESS=auto_learning_access,
         COHORT_PERMISSION_AUTO_STATISTICS_ACCESS=auto_statistics_access,
         COHORT_PERMISSION_AUTO_METRICS_ACCESS=auto_metrics_access,
+        GLOBAL_KEYCLOAK_URL=global_keycloak_url,
+        GLOBAL_KEYCLOAK_ENABLED="true" if auth_enabled else "false",
     ):
         sys.exit(1)
     # ========================================================================
