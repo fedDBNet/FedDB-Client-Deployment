@@ -27,7 +27,7 @@ services:
       - local-learning-network
 
   orch-api-db:
-    image:  postgres:18.4
+    image:  postgres:18.6
     restart: always
     environment:
       - POSTGRES_DB=local-learning-management
@@ -36,7 +36,7 @@ services:
     env_file:
       - env/orch-secrets.env
     volumes:
-      - orch-api-db-volume:/var/lib/postgresql/data
+      - orch-api-db-volume:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d local-learning-management"]
       interval: 10s
@@ -95,7 +95,7 @@ services:
       - local-learning-network
 
   local-learning-api-db:
-    image:  postgres:18.4
+    image:  postgres:18.6
     restart: always
     environment:
       - POSTGRES_DB=local-learning-management
@@ -104,7 +104,7 @@ services:
     env_file:
       - env/local-learning-secrets.env
     volumes:
-      - local-learning-api-db-volume:/var/lib/postgresql/data
+      - local-learning-api-db-volume:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U user -d local-learning-management"]
       interval: 10s
@@ -194,10 +194,10 @@ services:
         condition: service_healthy
 
   keycloak-postgres:
-    image: postgres:18.4
+    image: postgres:18.6
     restart: always
     volumes:
-      - keycloak_postgres_volume:/var/lib/postgresql/data
+      - keycloak_postgres_volume:/var/lib/postgresql
     env_file:
       - env/keycloak-secrets.env
     environment:
