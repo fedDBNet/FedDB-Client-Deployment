@@ -68,6 +68,8 @@ services:
     - QUARKUS_OIDC_AUTHORIZATION_PATH=/protocol/openid-connect/auth
     - QUARKUS_KEYCLOAK_ADMIN_CLIENT_SERVER_URL=http://keycloak:8080/auth
     - QUARKUS_OIDC_INTROSPECTION_PATH=/protocol/openid-connect/token/introspect
+    - QUARKUS_OIDC_JWKS_PATH=/protocol/openid-connect/certs
+    - QUARKUS_OIDC_TOKEN_ISSUER=${DEPLOYED_ON_ADDRESS}/auth/realms/FLNet-Client
     - QUARKUS_KEYCLOAK_ADMIN_CLIENT_REALM=FLNet-Client
     - QUARKUS_OIDC_CLIENT_ID=local-learning-api
     - QUARKUS_KEYCLOAK_ADMIN_CLIENT_CLIENT_ID=local-learning-api
