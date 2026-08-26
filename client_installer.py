@@ -592,8 +592,8 @@ def main():
             global_user_id = ""
 
         # Step E: Authentication settings
-        username = ""
-        password = ""
+        username = "dummy"
+        password = "dummy"
         if auth_enabled:
             print("\nThe FL-Net Client authorizes towards the FL-Net Platform. You should have created or received a user account on the platform before continuing.")
             print("If this is not the case, please create an account on the platform first and then come back to this installer.")
@@ -855,6 +855,7 @@ def main():
     learning_db_password = gen_secret()
     learning_api_client_secret = gen_secret()
     learning_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'local-learning-secrets.env'
+
     if not write_env_file(
         learning_api_secrets_file,
         skip_when_exists=False,
