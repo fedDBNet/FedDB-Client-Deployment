@@ -4,6 +4,26 @@ Initializes the FLNET_CLIENT_DIR as a FL-Net Client on the current machine.
 Checks first for requirements, requests relevant parameters from the user and
 initializes secrets.
 Leaves the user with instructions on how to then start and setup their FL-Net Client.
+
+This installer supports three modes, decided once at startup:
+
+  CLEAN        - no existing configuration found. Runs the full setup and
+                 generates brand new secrets.
+  RECONFIGURE  - existing configuration found. Re-runs the prompts (prefilled
+                 with the previous answers), but NEVER regenerates the
+                 cryptographic secrets (DB passwords, Keycloak client secret),
+                 since those are already baked into the running Postgres/
+                 Keycloak volumes. Only the FL-Net Platform login
+                 (username/password) may be updated, since that is just an
+                 outbound credential used by local-learning-api to authenticate
+                 to the global platform - it isn't baked into any local volume.
+                 Applying a reconfiguration only needs `docker compose up -d`;
+                 it must NOT be combined with `down -v`.
+  FORCE_CLEAN  - existing configuration found, but the user explicitly asked
+                 for a full reset. Regenerates all secrets, which means the
+                 existing volumes are no longer compatible with them, so the
+                 user is instructed to `docker compose down -v` (destroying
+                 all existing data) before `docker compose up -d`.
 """
 import re
 from typing import Optional
@@ -14,7 +34,11 @@ from pathlib import Path
 
 BASE_DIR_INSTALLER_SCRIPT = Path(__file__).resolve().parent
 FLNET_CLIENT_DIR = BASE_DIR_INSTALLER_SCRIPT / 'FLNet_client'
-FLNET_CLIENT_ENV_DIR = FLNET_CLIENT_DIR / 'env'
+FLNET_CLIENT_SECRETS_ENV_DIR = FLNET_CLIENT_DIR / 'env'
+FLNET_CLIENT_CONFIGURATION_ENV_FILE = FLNET_CLIENT_DIR / '.env'
+ORCH_SECRETS_FILE = FLNET_CLIENT_SECRETS_ENV_DIR / 'orch-secrets.env'
+LEARNING_SECRETS_FILE = FLNET_CLIENT_SECRETS_ENV_DIR / 'local-learning-secrets.env'
+KEYCLOAK_SECRETS_FILE = FLNET_CLIENT_SECRETS_ENV_DIR / 'keycloak-secrets.env'
 
 DEFAULT_PLATFORM_ADDRESS = "federated-learning.net"
 DEFAULT_PLATFORM_PROTOCOL = "https"
@@ -38,7 +62,18 @@ GLOBAL_DOMAIN_TO_AUTH_ENABLED_INFO = {
 }
 DEFAULT_FRONTEND_IMAGE = f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:{IMAGE_TAG}"
 DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME = "keycloak-admin"
-overwrite_existing_secrets = False
+
+# Normalized keys used for the crypto-secret dict passed between
+# generate_secrets()/read_existing_secrets() and write_secret_files().
+SECRET_KEY_ORCH_DB_PASSWORD = "ORCH_POSTGRES_PASSWORD"
+SECRET_KEY_LEARNING_DB_PASSWORD = "LEARNING_POSTGRES_PASSWORD"
+SECRET_KEY_LEARNING_OIDC_CLIENT_SECRET = "LEARNING_OIDC_CLIENT_SECRET"
+SECRET_KEY_KEYCLOAK_DB_PASSWORD = "KEYCLOAK_DB_PASSWORD"
+SECRET_KEY_KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD = "KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD"
+
+MODE_CLEAN = "CLEAN"
+MODE_RECONFIGURE = "RECONFIGURE"
+MODE_FORCE_CLEAN = "FORCE_CLEAN"
 
 # ============================================================================
 # Helper Functions
@@ -96,7 +131,7 @@ def gen_secret(length: int = 64) -> str:
 
 def write_env_file(filepath: Path, comments: Optional[dict] = None, skip_when_exists: bool = False, **variables) -> bool:
     """
-    Write environment variables to a file with overwrite protection.
+    Write environment variables to a file.
 
     Args:
         filepath: Path to the .env file
@@ -105,30 +140,17 @@ def write_env_file(filepath: Path, comments: Optional[dict] = None, skip_when_ex
         **variables: Key-value pairs to write (VAR=value format)
 
     Returns:
-        True if successful, False if user aborted
-    """
-    global overwrite_existing_secrets
-    if filepath.exists():
-        if skip_when_exists:
-            print(f"Info: The file '{filepath}' already exists. Skipping.")
-            return True
-        if overwrite_existing_secrets == False:
-            while True:
-                print(f"WARNING: Trying to write to '{filepath}' but it already exists.")
-                print("This means you already created a deployment before. Overwriting would break an EXISTING deployment, as as soon as the deployment has been started once")
-                print("The databases are initialized with the respective secrets")
-                overwrite_input = input(f"Do you want to overwrite files with new settings, potentially breaking an existing deployment? (y/n): ").strip().lower()
-                if overwrite_input in ('y', 'yes'):
-                    print(f"Overwriting the file '{filepath}' with new settings.")
-                    overwrite_existing_secrets = True
-                    break
-                elif overwrite_input in ('n', 'no'):
-                    print(f"Skipping writing to '{filepath}' as per user request.")
-                    return True
-                else:
-                    print("Please answer with 'y' or 'n'.")
+        True if successful, False otherwise
 
-        print(f"Warning: The file '{filepath}' already exists. Overwriting with new settings.")
+    Note: this function always overwrites (unless skip_when_exists is set). The
+    decision of WHETHER it is safe to overwrite a given file (e.g. the secrets
+    files, which must never be regenerated once a deployment has been started)
+    is made once, up front, by choosing an installer mode - not here on a
+    per-file basis.
+    """
+    if filepath.exists() and skip_when_exists:
+        print(f"Info: The file '{filepath}' already exists. Skipping.")
+        return True
 
     # Ensure parent directory exists
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -362,7 +384,9 @@ def ask_yes_no(prompt: str, default: bool = False) -> bool:
         )
         if answer in ("y", "yes"):
             return True
-        if answer in ("n", "no", ""):
+        if answer in ("n", "no"):
+            return False
+        if answer == "":
             return default
         print("Please answer with 'y' or 'n'.")
 
@@ -392,13 +416,199 @@ def ask_int(prompt: str, default: int) -> int:
         )
     return int(answer) if answer != "" else default
 
+def str_to_bool(value: Optional[str], fallback: bool) -> bool:
+    """Parse the 'true'/'false' strings written into .env back into a bool."""
+    if value is None:
+        return fallback
+    return value.strip().lower() == "true"
+
 # ============================================================================
-# Main Installation Logic
+# Mode detection
 # ============================================================================
 
-def main():
-    """Main installation/initialization workflow."""
-    print("Starting the initialization of a FL-Net Client...\n")
+def is_existing_installation() -> bool:
+    """
+    An installation counts as "existing" only if the main .env AND all three
+    secrets files are present. If any of them is missing, we treat it as a
+    clean install - a partial state is either a first run that was
+    interrupted, or manual tampering we shouldn't try to be clever about.
+    """
+    return (
+        FLNET_CLIENT_CONFIGURATION_ENV_FILE.exists()
+        and ORCH_SECRETS_FILE.exists()
+        and LEARNING_SECRETS_FILE.exists()
+        and KEYCLOAK_SECRETS_FILE.exists()
+    )
+
+
+def determine_mode() -> str:
+    """Decide once, up front, whether this run is a clean install, a
+    reconfiguration of an existing deployment, or a forced clean start that
+    intentionally throws away an existing deployment's secrets and data."""
+    if not is_existing_installation():
+        print("No existing configuration found. Starting a fresh FL-Net Client setup.\n")
+        return MODE_CLEAN
+
+    print("Existing FL-Net Client configuration detected in 'FLNet_client/'.\n")
+    mode = ask_choice(
+        "Do you want to RECONFIGURE the existing deployment (keeps secrets and data) "
+        "or FORCE a completely clean start (wipes everything and regenerates secrets)?",
+        options={"reconfigure": MODE_RECONFIGURE, "clean": MODE_FORCE_CLEAN},
+        default=MODE_RECONFIGURE,
+    )
+
+    if mode == MODE_RECONFIGURE:
+        print("\nReconfiguring. Existing secrets (DB passwords, Keycloak client secret) will be preserved.")
+        print("Once finished, apply the changes with:")
+        print("  docker compose up -d")
+        print("All suggested default values will be the previously chosen values.")
+        if not ask_yes_no("Continue with reconfiguration?", default=True):
+            sys.exit("Aborting as per user request.")
+    else:
+        print("\nWARNING: Forcing a clean start regenerates ALL secrets.")
+        print("The existing deployment's database and Keycloak passwords will be OVERWRITTEN.")
+        print("The service interactions will be broken until the new secrets are applied, and the data is reinitialized.")
+        print("The secrets are already stored in your Docker volumes, so afterwards you MUST run:")
+        print("  docker compose down -v")
+        print("  docker compose up -d")
+        print("This permanently deletes ALL existing data (users, cohorts, learning results, everything).\n")
+        if not ask_yes_no("Are you sure you want to force a clean start and lose all existing data?", default=False):
+            sys.exit("Aborting as per user request.")
+
+    return mode
+
+
+def read_existing_config() -> dict:
+    """Reads FLNet_client/.env back into a flat dict so collect_configuration()
+    can prefill its prompts with the previous run's answers (RECONFIGURE mode)."""
+    return env_file_to_dict(FLNET_CLIENT_CONFIGURATION_ENV_FILE)
+
+
+def match_predefined_network(defaults: dict) -> Optional[str]:
+    """Best-effort match of a previously-configured global domain against the
+    predefined networks, so the reconfigure flow can default back to the same
+    choice ('1'/'2'/'3') instead of always falling back to 'self-deployed'."""
+    protocol = defaults.get("GLOBAL_HTTP_PROTOCOL")
+    domain_with_port = defaults.get("GLOBAL_DOMAIN")
+    if not protocol or not domain_with_port:
+        return None
+    full = f"{protocol}://{domain_with_port}"
+    for key, cfg in PREDEFINED_NETWORKS.items():
+        if str(Domain(cfg.global_domain)) == str(Domain(full)):
+            return key
+    return None
+
+
+# ============================================================================
+# Secrets
+# ============================================================================
+
+def generate_secrets() -> dict:
+    """
+    Generates brand-new cryptographic secrets. Used for CLEAN and FORCE_CLEAN
+    modes only - never call this in RECONFIGURE mode, since these values are
+    already baked into the running Postgres/Keycloak volumes.
+
+    Note: this does NOT include the FL-Net Platform username/password. Those
+    aren't generated secrets, they're user-supplied login credentials for
+    local-learning-api to authenticate to the global platform, and are handled
+    separately so they can be updated in any mode.
+    """
+    return {
+        SECRET_KEY_ORCH_DB_PASSWORD: gen_secret(),
+        SECRET_KEY_LEARNING_DB_PASSWORD: gen_secret(),
+        SECRET_KEY_LEARNING_OIDC_CLIENT_SECRET: gen_secret(),
+        SECRET_KEY_KEYCLOAK_DB_PASSWORD: gen_secret(),
+        # Needs to be used by the admin, so we make it a bit shorter and easier to handle.
+        # We advise the user to change it after first login anyways!
+        SECRET_KEY_KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD: gen_secret(16),
+    }
+
+
+def read_existing_secrets() -> dict:
+    """
+    Reads the existing secrets files back into the same normalized shape
+    generate_secrets() produces, so RECONFIGURE mode can pass them straight
+    into write_secret_files() unchanged.
+    """
+    orch = env_file_to_dict(ORCH_SECRETS_FILE)
+    learning = env_file_to_dict(LEARNING_SECRETS_FILE)
+    keycloak = env_file_to_dict(KEYCLOAK_SECRETS_FILE)
+    return {
+        SECRET_KEY_ORCH_DB_PASSWORD: orch.get("POSTGRES_PASSWORD", ""),
+        SECRET_KEY_LEARNING_DB_PASSWORD: learning.get("POSTGRES_PASSWORD", ""),
+        SECRET_KEY_LEARNING_OIDC_CLIENT_SECRET: learning.get("QUARKUS_OIDC_CREDENTIALS_SECRET", ""),
+        SECRET_KEY_KEYCLOAK_DB_PASSWORD: keycloak.get("KC_DB_PASSWORD", keycloak.get("POSTGRES_PASSWORD", "")),
+        SECRET_KEY_KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD: keycloak.get("KC_BOOTSTRAP_ADMIN_PASSWORD", ""),
+    }
+
+
+def write_secret_files(env_dir: Path, secret_values: dict, platform_username: str, platform_password: str) -> None:
+    """
+    The only place that writes orch-secrets.env / local-learning-secrets.env /
+    keycloak-secrets.env.
+
+    `secret_values` holds the cryptographic secrets (DB passwords, Keycloak
+    client secret) - callers pass either generate_secrets() (CLEAN/FORCE_CLEAN)
+    or read_existing_secrets() (RECONFIGURE) here, so this function never
+    decides whether to generate or reuse them.
+
+    `platform_username` / `platform_password` are the FL-Net Platform login -
+    the credentials local-learning-api uses to authenticate to the global
+    platform (the global coordinator). These are always written fresh from
+    the current run's answers, in every mode, since they're not baked into
+    any local database and can safely change at any time.
+    """
+    orch_db_password = secret_values[SECRET_KEY_ORCH_DB_PASSWORD]
+    learning_db_password = secret_values[SECRET_KEY_LEARNING_DB_PASSWORD]
+    learning_api_client_secret = secret_values[SECRET_KEY_LEARNING_OIDC_CLIENT_SECRET]
+    keycloak_db_password = secret_values[SECRET_KEY_KEYCLOAK_DB_PASSWORD]
+    keycloak_bootstrap_admin_password = secret_values[SECRET_KEY_KEYCLOAK_BOOTSTRAP_ADMIN_PASSWORD]
+
+    # --- orch-secrets ---
+    write_env_file(
+        env_dir / 'orch-secrets.env',
+        POSTGRES_PASSWORD=orch_db_password,
+        QUARKUS_DATASOURCE_PASSWORD=orch_db_password
+    )
+
+    # --- learning-secrets ---
+    write_env_file(
+        env_dir / 'local-learning-secrets.env',
+        POSTGRES_PASSWORD=learning_db_password,
+        QUARKUS_DATASOURCE_PASSWORD=learning_db_password,
+        QUARKUS_OIDC_CREDENTIALS_SECRET=learning_api_client_secret,
+        QUARKUS_KEYCLOAK_ADMIN_CLIENT_CLIENT_SECRET=learning_api_client_secret,
+        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_USERNAME=platform_username,
+        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_PASSWORD=platform_password,
+      # see env/local-learning-secrets.env
+    )
+
+    # --- keycloak-secrets ---
+    write_env_file(
+        env_dir / 'keycloak-secrets.env',
+        KC_BOOTSTRAP_ADMIN_USERNAME=DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME,
+        POSTGRES_PASSWORD=keycloak_db_password,
+        KC_DB_PASSWORD=keycloak_db_password,
+        KC_BOOTSTRAP_ADMIN_PASSWORD=keycloak_bootstrap_admin_password,
+        LOCAL_LEARNING_SECRET=learning_api_client_secret,
+    )
+
+    print("Secrets are in place.\n")
+
+
+# ============================================================================
+# Interactive configuration collection
+# ============================================================================
+
+def collect_configuration(defaults: dict, mode: str) -> dict:
+    """
+    Runs the interactive prompts (network/federation, listening interface,
+    domain/SSL, permissions) and returns everything build_and_write_env() and
+    write_secret_files() need. `defaults` (from read_existing_config(), or {}
+    in CLEAN/FORCE_CLEAN mode) prefills the prompts so reconfiguring doesn't
+    mean starting from scratch.
+    """
     # All variables that will be set
     exposed_address = None
     exposed_ip_address = None
@@ -407,7 +617,6 @@ def main():
     enable_ssl_termination_in_client = False
     ssl_files_given = False
     use_self_signed_certs = False
-    ssl_path = None
     fullchain_file = None
     privkey_file = None
     global_domain_obj = None
@@ -415,198 +624,221 @@ def main():
     federated_learning_enabled = True
     auth_enabled = True
     frontend_image = DEFAULT_FRONTEND_IMAGE
+
     # ========================================================================
     # 0. Preconfiguration: Network and federation setup
     # vars: global_domain_obj, global_tcp_port, federated_learning_enabled,
     #   permission system settings, auth settings
     # ========================================================================
-    network_defined = False
-    while not network_defined:
-        print("An FL-Net Client connects to a global network to access data schemas (standards) and")
-        print("the app registry (ETL helpers, federated learning apps).")
-        print("When subscriping to a schema, the client informs the network that this schema is used and the network increments the subscription counter")
-        print("Otherwise, this is a read only connection and no data from the client is sent")
-        print("Optionally, the same network can also be used for federated queries and learning (asked next).")
-        print()
-        print("Do you want to:")
-        print("1. join a preexisting network")
-        print("2. join a self-deployed network")
-        print("You can later chose to not participate in federation and only use the network to read-only access the app registry and data schemas.")
-        input_preconfiguration = get_validated_user_input(
-            prompt="Enter '1' or '2': ",
-            validation_func=lambda x: x in ("1", "2"),
-            error_message="Invalid input. Please enter '1' or '2'.",
-            apply_lower=True
+    print("An FL-Net Client connects to a global network to access data schemas (standards) and")
+    print("the app registry (ETL helpers, federated learning apps).")
+    print("When subscriping to a schema, the client informs the network that this schema is used and the network increments the subscription counter")
+    print("Otherwise, this is a read only connection and no data from the client is sent")
+    print("Optionally, the same network can also be used for federated queries and learning (asked next).")
+    print()
+    print("Do you want to:")
+    print("1. join a preexisting network")
+    print("2. join a self-deployed network")
+    print("You can later chose to not participate in federation and only use the network to read-only access the app registry and data schemas.")
+    predefined_default_key = match_predefined_network(defaults) or "1"
+    input_preconfiguration = ask_choice(
+        "Enter '1' (preexisting network) or '2' (self-deployed network)",
+        options={"1": "1", "2": "2"},
+        default=predefined_default_key,
+    )
+
+    if input_preconfiguration == "1":
+        print("Enter the number of the network you want to join:")
+        print("1. flnet")
+        print("2. microbaiome")
+        print("3. daibetes")
+        default_network_key = predefined_default_key if predefined_default_key in PREDEFINED_NETWORKS else "1"
+        input_predefined_config = ask_choice(
+            "Enter '1', '2' or '3'",
+            options={"1": "1", "2": "2", "3": "3"},
+            default=default_network_key,
         )
 
-        if input_preconfiguration == "1":
-            print("Enter the number of the network you want to join:")
-            print("1. flnet")
-            print("2. microbaiome")
-            print("3. daibetes")
-            input_predefined_config = get_validated_user_input(
-                prompt="Enter '1', '2' or '3': ",
-                validation_func=lambda x: x in ("1", "2", "3"),
-                error_message="Invalid input. Please enter '1', '2' or '3'.",
-                apply_lower=True
-            )
+        config = PREDEFINED_NETWORKS[input_predefined_config]
+        global_domain_obj = Domain(config.global_domain)
+        global_tcp_port = config.global_tcp_port
+        auth_enabled = config.auth_enabled
+        frontend_image = config.frontend_image
+        print(f"Joining the '{config.name}' network at '{config.global_domain}' (TCP port {config.global_tcp_port}).")
 
-            config = PREDEFINED_NETWORKS[input_predefined_config]
-            global_domain_obj = Domain(config.global_domain)
-            global_tcp_port = config.global_tcp_port
-            auth_enabled = config.auth_enabled
-            frontend_image = config.frontend_image
-            print(f"Joining the '{config.name}' network at '{config.global_domain}' (TCP port {config.global_tcp_port}).")
-
-        elif input_preconfiguration == "2":
-            print("You chose to join your own self-deployed network.")
-            print("Make sure the global platform is up and running before continuing.")
-            while True:
-                global_domain_input = input(f"Enter the platform address with protocol (e.g., 'https://platform.example.com'). Press Enter for default ({DEFAULT_FULL_GLOBAL_ADDRESS}): ").strip()
-                if not global_domain_input:
-                    global_domain_input = DEFAULT_FULL_GLOBAL_ADDRESS
-                temp_global_domain_obj = Domain(global_domain_input)
-                if not temp_global_domain_obj.is_valid():
-                    if not temp_global_domain_obj.protocol_is_valid():
-                        print("ERROR: You must specify a protocol (http:// or https://).")
-                    elif not temp_global_domain_obj.domain_is_valid():
-                        print("ERROR: The domain name is not valid.")
-                    elif not temp_global_domain_obj.port_is_valid():
-                        print("ERROR: The port is not valid.")
-                    continue
-                global_domain_obj = temp_global_domain_obj
-                print(f"Connecting to platform at '{global_domain_obj}'.")
-                break
-            while True:
-                global_tcp_port = input(f"Enter the TCP relay port of the global platform (default {DEFAULT_PLATFORM_TCP_PORT}): ").strip()
-                if not global_tcp_port:
-                    global_tcp_port = DEFAULT_PLATFORM_TCP_PORT
-                    break
-                if validate_port(global_tcp_port):
-                    break
-                else:
-                    print(f"The port '{global_tcp_port}' is not valid. Please enter a number between 1 and 65535.")
-
-            auth_enabled = ask_yes_no(
-                "Is authentication of your Client to the  Platform enabled on your self-deployed platform?",
-                default=True
-            )
-            frontend_image = GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), DEFAULT_FRONTEND_IMAGE)
-
-        # Step B: Federation participation (join and own only)
-        print()
-        print("The TCP relay and WebSocket connection enable federated queries and learning across organizations.")
-        print("This allows privacy-preserving computation on data distributed across multiple sites.")
+    elif input_preconfiguration == "2":
+        print("You chose to join your own self-deployed network.")
+        print("Make sure the global platform is up and running before continuing.")
+        default_global_address = defaults.get("GLOBAL_HTTP_PROTOCOL") and defaults.get("GLOBAL_DOMAIN") and \
+            f"{defaults['GLOBAL_HTTP_PROTOCOL']}://{defaults['GLOBAL_DOMAIN']}"
+        default_global_address = default_global_address or DEFAULT_FULL_GLOBAL_ADDRESS
         while True:
-            federation_input = input("Do you want to enable federated queries and learning? (y/n): ").strip().lower()
-            if federation_input in ("y", "yes"):
-                federated_learning_enabled = True
-                print("Federated queries and learning will be enabled.")
+            global_domain_input = input(f"Enter the platform address with protocol (e.g., 'https://platform.example.com'). Press Enter for default ({default_global_address}): ").strip()
+            if not global_domain_input:
+                global_domain_input = default_global_address
+            temp_global_domain_obj = Domain(global_domain_input)
+            if not temp_global_domain_obj.is_valid():
+                if not temp_global_domain_obj.protocol_is_valid():
+                    print("ERROR: You must specify a protocol (http:// or https://).")
+                elif not temp_global_domain_obj.domain_is_valid():
+                    print("ERROR: The domain name is not valid.")
+                elif not temp_global_domain_obj.port_is_valid():
+                    print("ERROR: The port is not valid.")
+                continue
+            global_domain_obj = temp_global_domain_obj
+            print(f"Connecting to platform at '{global_domain_obj}'.")
+            break
+        default_global_tcp_port = defaults.get("GLOBAL_TCP_PORT", DEFAULT_PLATFORM_TCP_PORT)
+        while True:
+            global_tcp_port = input(f"Enter the TCP relay port of the global platform (default {default_global_tcp_port}): ").strip()
+            if not global_tcp_port:
+                global_tcp_port = default_global_tcp_port
                 break
-            elif federation_input in ("n", "no"):
-                federated_learning_enabled = False
-                print("Federated queries and learning will be disabled. Relevant addresses will be set to non-resolving addresses.")
+            if validate_port(global_tcp_port):
                 break
             else:
-                print("Please answer with 'y' or 'n'.")
-        network_defined = True
+                print(f"The port '{global_tcp_port}' is not valid. Please enter a number between 1 and 65535.")
 
-        # Step C: Privacy settings - Should automatic-access permissions be allowed to exist at all?
-        print("\nThe FL-Net Client uses a permission system that controls which global network users can access certain resources on this client:")
-        print("  - Resources: federated queries, statistics, learning results, and metrics from executed federated learning runs.")
-        print("  - Users: these are users on the FL-Net network you're joining, NOT local accounts on this machine. When a permission is created, it can be scoped to one specific user or opened up to any user.")
-        print("\nStatistics, learning results, and metrics require manual approval by default for every access request.")
-        print("Here, you decide whether 'automatic' access is even allowed to exist for these three resources. If you say no here, no permission created later at any point will ever be able to skip manual approval for that resource.")
-
-        automatic_statistics_permission_enabled = ask_yes_no(
-            "Should automatic-access permissions be allowed to exist at all for STATISTICS?"
+        auth_enabled = ask_yes_no(
+            "Is authentication of your Client to the  Platform enabled on your self-deployed platform?",
+            default=str_to_bool(defaults.get("GLOBAL_KEYCLOAK_ENABLED"), True)
         )
-        automatic_learning_permission_enabled = ask_yes_no(
-            "Should automatic-access permissions be allowed to exist at all for LEARNING results?"
-        )
-        automatic_metrics_permission_enabled = ask_yes_no(
-            "Should automatic-access permissions be allowed to exist at all for METRICS?"
-        )
+        frontend_image = GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), defaults.get("FRONTEND_IMAGE", DEFAULT_FRONTEND_IMAGE))
 
-        # Step D: Privacy settings - default permission for new cohorts
-        print("\nRegarding this permission system, we support setting up a default permission that's created automatically for every new cohort on this client.")
-        print("This also configures the default handling of federated queries. ")
+    # Step B: Federation participation (join and own only)
+    print()
+    print("The TCP relay and WebSocket connection enable federated queries and learning across organizations.")
+    print("This allows privacy-preserving computation on data distributed across multiple sites.")
+    federated_learning_enabled = ask_yes_no(
+        "Do you want to enable federated queries and learning?",
+        default=str_to_bool(defaults.get("FEDERATED_LEARNING_ENABLED"), True)
+    )
+    if federated_learning_enabled:
+        print("Federated queries and learning will be enabled.")
+    else:
+        print("Federated queries and learning will be disabled. Relevant addresses will be set to non-resolving addresses.")
 
-        cohort_permission_enabled = ask_yes_no(
-            "Do you want to set up this default permission for every new cohort?", default=False
-        )
+    # Step C: Privacy settings - Should automatic-access permissions be allowed to exist at all?
+    print("\nThe FL-Net Client uses a permission system that controls which global network users can access certain resources on this client:")
+    print("  - Resources: federated queries, statistics, learning results, and metrics from executed federated learning runs.")
+    print("  - Users: these are users on the FL-Net network you're joining, NOT local accounts on this machine. When a permission is created, it can be scoped to one specific user or opened up to any user.")
+    print("\nStatistics, learning results, and metrics require manual approval by default for every access request.")
+    print("Here, you decide whether 'automatic' access is even allowed to exist for these three resources. If you say no here, no permission created later at any point will ever be able to skip manual approval for that resource.")
 
-        if cohort_permission_enabled:
-            global_user_id = get_validated_user_input(
-                prompt="Who is this default permission for? Give a specific FL-Net user ID, or leave blank for any user: ",
-                validation_func=lambda x: True,
-                error_message="",
-                apply_lower=False
+    automatic_statistics_permission_enabled = ask_yes_no(
+        "Should automatic-access permissions be allowed to exist at all for STATISTICS?",
+        default=not str_to_bool(defaults.get("DISABLE_AUTOMATIC_COHORT_PERMISSION_STATISTICS"), True)
+    )
+    automatic_learning_permission_enabled = ask_yes_no(
+        "Should automatic-access permissions be allowed to exist at all for LEARNING results?",
+        default=not str_to_bool(defaults.get("DISABLE_AUTOMATIC_COHORT_PERMISSION_LEARNING"), True)
+    )
+    automatic_metrics_permission_enabled = ask_yes_no(
+        "Should automatic-access permissions be allowed to exist at all for METRICS?",
+        default=not str_to_bool(defaults.get("DISABLE_AUTOMATIC_COHORT_PERMISSION_METRICS"), True)
+    )
+
+    # Step D: Privacy settings - default permission for new cohorts
+    print("\nRegarding this permission system, we support setting up a default permission that's created automatically for every new cohort on this client.")
+    print("This also configures the default handling of federated queries. ")
+
+    cohort_permission_enabled = ask_yes_no(
+        "Do you want to set up this default permission for every new cohort?",
+        default=str_to_bool(defaults.get("COHORT_PERMISSION_ENABLED"), False)
+    )
+
+    if cohort_permission_enabled:
+        global_user_id = get_validated_user_input(
+            prompt=f"Who is this default permission for? Give a specific FL-Net user ID, or leave blank for any user (default: '{defaults.get('COHORT_PERMISSION_GLOBAL_USER_ID', '')}'): ",
+            validation_func=lambda x: True,
+            error_message="",
+            apply_lower=False
+        ) or defaults.get("COHORT_PERMISSION_GLOBAL_USER_ID", "")
+
+        if automatic_statistics_permission_enabled:
+            auto_statistics_access = ask_choice(
+                "Should the default permission grant automatic access to STATISTICS? 'all' automatically approves every request; 'none' leaves every request requiring manual approval.",
+                options={"all": "ALL", "none": "NONE"},
+                default=defaults.get("COHORT_PERMISSION_AUTO_STATISTICS_ACCESS", "NONE"),
             )
+        else:
+            auto_statistics_access = "NONE"
 
-            if automatic_statistics_permission_enabled:
-                auto_statistics_access = ask_choice(
-                    "Should the default permission grant automatic access to STATISTICS? 'all' automatically approves every request; 'none' leaves every request requiring manual approval.",
-                    options={"all": "ALL", "none": "NONE"},
-                    default="NONE",
-                )
-            else:
-                auto_statistics_access = "NONE"
-
-            if automatic_metrics_permission_enabled:
-                auto_metrics_access = ask_choice(
-                    "Should the default permission grant automatic access to METRICS? 'all' automatically approves every request; 'none' leaves every request requiring manual approval.",
-                    options={"all": "ALL", "none": "NONE"},
-                    default="NONE",
-                )
-            else:
-                auto_metrics_access = "NONE"
-
-            if automatic_learning_permission_enabled:
-                print("(Note: learning access is never automatic for tools that require internet or host access — those always require manual approval, regardless of this setting or any other permissions)")
-                auto_learning_access = ask_choice(
-                    "Should the default permission grant automatic access to LEARNING results? 'all' automatically approves every request; 'certified' automatically approves only requests using certified tools; 'none' leaves every request requiring manual approval.",
-                    options={"all": "ALL", "none": "NONE", "certified": "CERTIFIED_APPS"},
-                    default="NONE",
-                )
-            else:
-                auto_learning_access = "NONE"
-
-            print("\nFederated queries work differently: once a permission allows queries, access is granted automatically — there is no manual-approval step.")
-            print("Instead, the permission configures privacy protections applied to the results: thresholding, rounding, and rate-limiting.")
-
-            is_allowed_to_query = ask_yes_no(
-                "Allow federated queries against this client's data?", default=True
+        if automatic_metrics_permission_enabled:
+            auto_metrics_access = ask_choice(
+                "Should the default permission grant automatic access to METRICS? 'all' automatically approves every request; 'none' leaves every request requiring manual approval.",
+                options={"all": "ALL", "none": "NONE"},
+                default=defaults.get("COHORT_PERMISSION_AUTO_METRICS_ACCESS", "NONE"),
             )
+        else:
+            auto_metrics_access = "NONE"
 
-            if is_allowed_to_query:
-                query_retry_time = ask_int(
-                    "Minimum seconds between answering repeated queries (rate-limiting)?", default=3
-                )
-                query_sample_threshold = ask_int(
-                    "Minimum sample size required before a query is answered (thresholding)?", default=100
-                )
-            else:
-                query_retry_time = 3
-                query_sample_threshold = 100
-
+        if automatic_learning_permission_enabled:
+            print("(Note: learning access is never automatic for tools that require internet or host access — those always require manual approval, regardless of this setting or any other permissions)")
+            auto_learning_access = ask_choice(
+                "Should the default permission grant automatic access to LEARNING results? 'all' automatically approves every request; 'certified' automatically approves only requests using certified tools; 'none' leaves every request requiring manual approval.",
+                options={"all": "ALL", "none": "NONE", "certified": "CERTIFIED_APPS"},
+                default=defaults.get("COHORT_PERMISSION_AUTO_TRAINING_ACCESS", "NONE"),
+            )
         else:
             auto_learning_access = "NONE"
-            auto_statistics_access = "NONE"
-            auto_metrics_access = "NONE"
-            is_allowed_to_query = True
+
+        print("\nFederated queries work differently: once a permission allows queries, access is granted automatically — there is no manual-approval step.")
+        print("Instead, the permission configures privacy protections applied to the results: thresholding, rounding, and rate-limiting.")
+
+        is_allowed_to_query = ask_yes_no(
+            "Allow federated queries against this client's data?",
+            default=str_to_bool(defaults.get("COHORT_PERMISSION_IS_ALLOWED_TO_QUERY"), True)
+        )
+
+        if is_allowed_to_query:
+            query_retry_time = ask_int(
+                "Minimum seconds between answering repeated queries (rate-limiting)?",
+                default=int(defaults.get("COHORT_PERMISSION_QUERY_RETRY_TIME", 3))
+            )
+            query_sample_threshold = ask_int(
+                "Minimum sample size required before a query is answered (thresholding)?",
+                default=int(defaults.get("COHORT_PERMISSION_QUERY_SAMPLE_THRESHOLD", 100))
+            )
+        else:
             query_retry_time = 3
             query_sample_threshold = 100
-            global_user_id = ""
 
-        # Step E: Authentication settings
-        username = "dummy"
-        password = "dummy"
-        if auth_enabled:
-            print("\nThe FL-Net Client authorizes towards the FL-Net Platform. You should have created or received a user account on the platform before continuing.")
-            print("If this is not the case, please create an account on the platform first and then come back to this installer.")
-            username = input("Please enter your FL-Net Platform username: ").strip()
-            password = input("Please enter your FL-Net Platform password: ").strip()
+    else:
+        auto_learning_access = "NONE"
+        auto_statistics_access = "NONE"
+        auto_metrics_access = "NONE"
+        is_allowed_to_query = True
+        query_retry_time = 3
+        query_sample_threshold = 100
+        global_user_id = ""
+
+    # Step E: Authentication settings
+    # The username/password here are the FL-Net Platform login used by
+    # local-learning-api to authenticate to the global platform. This is safe
+    # to update in every mode - it's not a local secret baked into a volume.
+    username = "dummy"
+    password = "dummy"
+    if mode == MODE_RECONFIGURE:
+        reconfigure_auth = ask_yes_no(
+            "Do you want to update the FL-Net Platform username/password used by the FL-Net Client to authenticate to the global platform?",
+            default=False
+        )
+    if auth_enabled and (mode != MODE_RECONFIGURE or reconfigure_auth):
+        print("\nThe FL-Net Client authorizes towards the FL-Net Platform. You should have created or received a user account on the platform before continuing.")
+        print("If this is not the case, please create an account on the platform first and then come back to this installer.")
+        username = get_validated_user_input(
+            prompt="Please enter your FL-Net Platform username: ",
+            validation_func=lambda x: len(x) > 0,
+            error_message="Username cannot be empty.",
+            apply_lower=False
+        )
+        password = get_validated_user_input(
+            prompt="Please enter your FL-Net Platform password: ",
+            validation_func=lambda x: len(x) > 0,
+            error_message="Password cannot be empty.",
+            apply_lower=False
+        )
 
     # ========================================================================
     # 1. Which interface to listen on?
@@ -616,9 +848,13 @@ def main():
     print("You can either only expose the client to this machine (localhost), or expose it to the internet/intranet.")
     print("If you expose to the internet, consider limiting access to your server to only your internal network or via a VPN for security reasons.")
     print("You can also set up SSL encryption for encrypted communication later in the setup.\n")
+    default_exposed_ip = defaults.get("EXPOSED_IP_ADDRESS")
+    default_exposed_address = "localhost" if (not default_exposed_ip or default_exposed_ip == "127.0.0.1") else default_exposed_ip
     while True:
-        exposed_address_input = input("\nPlease specify the address without port the FL-Net Client should run on. We suggest to use 0.0.0.0 to open to the internet/intranet or localhost to only listen on this machine (default 127.0.0.1 if you just press Enter): ").strip().lower()
-        if not exposed_address_input or exposed_address_input == "127.0.0.1":
+        exposed_address_input = input(f"\nPlease specify the address without port the FL-Net Client should run on. We suggest to use 0.0.0.0 to open to the internet/intranet or localhost to only listen on this machine (default {default_exposed_address} if you just press Enter): ").strip().lower()
+        if not exposed_address_input:
+            exposed_address_input = default_exposed_address
+        if exposed_address_input == "127.0.0.1":
             # translate 127.0.0.1 to localhost
             exposed_address_input = "localhost"
         if not (validate_ip_address(exposed_address_input) or exposed_address_input == "localhost"):
@@ -637,8 +873,15 @@ def main():
     print("You can optionally set the domain you are using for your FL-Net Client.")
     print("This enables us to enforce CORS policies and improve security.")
     print("We also offer to do SSL termination if you provide the relevant SSL files.")
+    has_custom_domain_default = str_to_bool(defaults.get("HAS_CUSTOM_DOMAIN"), False)
+    default_domain_input = defaults.get("DEPLOYED_ON_ADDRESS", "") if has_custom_domain_default else ""
     while True:
-        domain_input = input("If you setup a domain please specify the domain here with protocol (e.g., 'https://example.com:4200', 'http://example2.com', ...), or press Enter to skip: ").strip()
+        prompt_suffix = f" (press Enter to keep '{default_domain_input}', or type 'none' to remove it)" if default_domain_input else ""
+        domain_input = input(f"If you setup a domain please specify the domain here with protocol (e.g., 'https://example.com:4200', 'http://example2.com', ...), or press Enter to skip{prompt_suffix}: ").strip()
+        if not domain_input and default_domain_input:
+            domain_input = default_domain_input
+        if domain_input.lower() == "none":
+            domain_input = ""
         if domain_input:
             # domain given
             domain_obj = Domain(domain_input)
@@ -662,31 +905,33 @@ def main():
         else:
             # No domain provided
             break
+    has_custom_domain = domain_obj is not None
 
     # Should the Client do the SSL termination?
+    default_ssl_termination = defaults.get("COMPOSE_PROFILES") == "ssl"
     while domain_input:
-        enable_ssl_termination_in_client_input = \
-            input("Do you want to enable SSL termination in the FLNet Client by providing SSL certificate files? (y/n): ").strip().lower()
-        if enable_ssl_termination_in_client_input in ('y', 'yes'):
-            enable_ssl_termination_in_client = True
-            break
-        elif enable_ssl_termination_in_client_input in ('n', 'no'):
-            enable_ssl_termination_in_client = False
-            break
-        else:
-            print("Please answer with 'y' or 'n'.")
-            continue
+        enable_ssl_termination_in_client = ask_yes_no(
+            "Do you want to enable SSL termination in the FLNet Client by providing SSL certificate files?",
+            default=default_ssl_termination
+        )
+        break
 
     # SSL certificate files retrieval loop
+    default_self_signed_dir = BASE_DIR_INSTALLER_SCRIPT / 'FLNet_client' / 'self_signed_certs'
+    default_was_self_signed = defaults.get("SSL_CERT_PUBLIC_KEY") == str(default_self_signed_dir / 'fullchain.pem')
     while enable_ssl_termination_in_client:
         print("How do you want to provide SSL certificates?")
         print("  1) Provide existing certificate files (e.g. from Let's Encrypt / certbot)")
         print("  2) Use self-signed certificates (generated separately via create_self_signed_certs_config.py + create_self_signed_certs.sh)")
-        ssl_source_input = input("Enter '1' or '2': ").strip()
+        ssl_source_input = ask_choice(
+            "Enter '1' or '2'",
+            options={"1": "1", "2": "2"},
+            default="2" if default_was_self_signed else "1",
+        )
 
         if ssl_source_input == '2':
             # Self-signed path: cert files don't exist yet, set paths to the predefined location
-            self_signed_dir = BASE_DIR_INSTALLER_SCRIPT / 'FLNet_client' / 'self_signed_certs'
+            self_signed_dir = default_self_signed_dir
             fullchain_file = self_signed_dir / 'fullchain.pem'
             privkey_file   = self_signed_dir / 'privkey.pem'
             use_self_signed_certs = True
@@ -704,13 +949,15 @@ def main():
 
         elif ssl_source_input == '1':
             print("Please provide the paths to your SSL certificate files.")
-            cert_input = input("Enter the path to your public certificate file (e.g. fullchain.pem): ").strip()
+            default_cert_path = defaults.get("SSL_CERT_PUBLIC_KEY", "") if not default_was_self_signed else ""
+            cert_input = input(f"Enter the path to your public certificate file (e.g. fullchain.pem){' [default: ' + default_cert_path + ']' if default_cert_path else ''}: ").strip() or default_cert_path
             fullchain_file = Path(cert_input).resolve()
             if not fullchain_file.exists():
                 print(f"ERROR: The file '{cert_input}' does not exist.")
                 continue
 
-            key_input = input("Enter the path to your private key file (e.g. privkey.pem): ").strip()
+            default_key_path = defaults.get("SSL_CERT_PRIVATE_KEY", "") if not default_was_self_signed else ""
+            key_input = input(f"Enter the path to your private key file (e.g. privkey.pem){' [default: ' + default_key_path + ']' if default_key_path else ''}: ").strip() or default_key_path
             privkey_file = Path(key_input).resolve()
             if not privkey_file.exists():
                 print(f"ERROR: The file '{key_input}' does not exist.")
@@ -737,7 +984,7 @@ def main():
     # If we terminate SSL we take the given port from the domain, in the other case
     # the user does SSL termination and therefore will listen on the domain_obj port with something
     # else just use 8250, some whatever default port
-    default_client_port = domain_obj.port() if domain_obj is not None and ssl_files_given else "8250"
+    default_client_port = domain_obj.port() if domain_obj is not None and ssl_files_given else defaults.get("EXPOSED_PORT", "8250")
     assert default_client_port is not None, "Default client port should be set at this point. Script error."
     while True:
         client_port_input = input(f"Please specify the port that the FL-Net Client should listen on (default is {default_client_port}): ").strip()
@@ -824,65 +1071,55 @@ def main():
 
     print()
     assert global_domain_obj is not None, "Global domain object should be set at this point. Script error."
-    # ========================================================================
-    # 3. Generate Secrets
-    # ========================================================================
-    print("Securely generating database secrets...\n")
 
-    # --- orch-secrets ---
-    orch_db_password = gen_secret()
+    return {
+        "username": username,
+        "password": password,
+        "exposed_address": exposed_address,
+        "exposed_ip_address": exposed_ip_address,
+        "client_port": client_port,
+        "domain_obj": domain_obj,
+        "has_custom_domain": has_custom_domain,
+        "enable_ssl_termination_in_client": enable_ssl_termination_in_client,
+        "ssl_files_given": ssl_files_given,
+        "use_self_signed_certs": use_self_signed_certs,
+        "fullchain_file": fullchain_file,
+        "privkey_file": privkey_file,
+        "global_domain_obj": global_domain_obj,
+        "global_tcp_port": global_tcp_port,
+        "federated_learning_enabled": federated_learning_enabled,
+        "auth_enabled": auth_enabled,
+        "frontend_image": frontend_image,
+        "automatic_statistics_permission_enabled": automatic_statistics_permission_enabled,
+        "automatic_learning_permission_enabled": automatic_learning_permission_enabled,
+        "automatic_metrics_permission_enabled": automatic_metrics_permission_enabled,
+        "cohort_permission_enabled": cohort_permission_enabled,
+        "global_user_id": global_user_id,
+        "auto_statistics_access": auto_statistics_access,
+        "auto_metrics_access": auto_metrics_access,
+        "auto_learning_access": auto_learning_access,
+        "is_allowed_to_query": is_allowed_to_query,
+        "query_retry_time": query_retry_time,
+        "query_sample_threshold": query_sample_threshold,
+    }
 
-    orch_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'orch-secrets.env'
-    if not write_env_file(
-        orch_api_secrets_file,
-        skip_when_exists=False,
-        POSTGRES_PASSWORD=orch_db_password,
-        QUARKUS_DATASOURCE_PASSWORD=orch_db_password
-    ):
-        sys.exit(1)
 
-    # --- learning-secrets ---
-    learning_db_password = gen_secret()
-    learning_api_client_secret = gen_secret()
-    learning_api_secrets_file = FLNET_CLIENT_ENV_DIR / 'local-learning-secrets.env'
+# ============================================================================
+# Writing the final .env file and patching nginx
+# ============================================================================
 
-    if not write_env_file(
-        learning_api_secrets_file,
-        skip_when_exists=False,
-        POSTGRES_PASSWORD=learning_db_password,
-        QUARKUS_DATASOURCE_PASSWORD=learning_db_password,
-        QUARKUS_OIDC_CREDENTIALS_SECRET=learning_api_client_secret,
-        QUARKUS_KEYCLOAK_ADMIN_CLIENT_CLIENT_SECRET=learning_api_client_secret,
-        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_USERNAME=username,
-        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_PASSWORD=password,
-      # see env/local-learning-secrets.env
-    ):
-        sys.exit(1)
+def build_and_write_env(config: dict) -> None:
+    """Patches nginx.conf and writes FLNet_client/.env from the collected configuration."""
+    global_domain_obj = config["global_domain_obj"]
+    global_tcp_port = config["global_tcp_port"]
+    federated_learning_enabled = config["federated_learning_enabled"]
+    domain_obj = config["domain_obj"]
+    exposed_address = config["exposed_address"]
+    client_port = config["client_port"]
+    ssl_files_given = config["ssl_files_given"]
+    fullchain_file = config["fullchain_file"]
+    privkey_file = config["privkey_file"]
 
-    # --- keycloak-secrets ---
-    keycloak_db_password = gen_secret()
-    keycloak_bootstrap_admin_password = gen_secret(16)
-        # Needs to be used by the admin, so we make it a bit shorter and easier to handle
-        # We advise the user to change it after first login anyways!
-
-    keycloak_secrets_file = FLNET_CLIENT_ENV_DIR / 'keycloak-secrets.env'
-    if not write_env_file(
-        keycloak_secrets_file,
-        skip_when_exists=False,
-        KC_BOOTSTRAP_ADMIN_USERNAME=DEFAULT_KEYCLOAK_BOOTSTRAP_ADMIN_USERNAME,
-        POSTGRES_PASSWORD=keycloak_db_password,
-        KC_DB_PASSWORD=keycloak_db_password,
-        KC_BOOTSTRAP_ADMIN_PASSWORD=keycloak_bootstrap_admin_password,
-        LOCAL_LEARNING_SECRET=learning_api_client_secret,
-    ):
-        sys.exit(1)
-
-    print("All secrets generated and stored securely.\n")
-    print()
-
-    # ========================================================================
-    # 5. Patch nginx.conf and save the final .env file
-    # ========================================================================
     # Build global URLs based on global_domain_obj
     global_protocol = global_domain_obj.protocol()
     global_ws_protocol = "wss" if global_protocol == "https" else "ws"
@@ -920,18 +1157,20 @@ def main():
 
     nginx_conf_path = FLNET_CLIENT_DIR / 'nginx.conf'
     patch_nginx_server_name(nginx_conf_path, str(deployed_on_domain))
-    if not write_env_file(
+    write_env_file(
         FLNET_CLIENT_DIR / '.env',
         comments={
             'DEPLOYED_ON_ADDRESS': 'WARNING: Changing DEPLOYED_ON_ADDRESS or DEPLOYED_ON_DOMAIN here will NOT update the nginx server_name. Re-run the installer to regenerate nginx.conf with the new domain.',
         },
-        skip_when_exists=False,
         COMPOSE_PROJECT_NAME=DEFAULT_COMPOSE_PROJECT_NAME,
-        EXPOSED_IP_ADDRESS=exposed_ip_address,
+        EXPOSED_IP_ADDRESS=config["exposed_ip_address"],
             # IP address for docker binding (docker doesn't understand 'localhost')
         EXPOSED_PORT=client_port,
         DEPLOYED_ON_ADDRESS=deployed_on_address,
         DEPLOYED_ON_DOMAIN=deployed_on_domain,
+        HAS_CUSTOM_DOMAIN="true" if config["has_custom_domain"] else "false",
+            # Lets a later reconfigure run tell apart "no domain configured" from
+            # "domain happens to equal the exposed address" when reading .env back.
         GLOBAL_DOMAIN=global_base_with_port,
         GLOBAL_HTTP_PROTOCOL=global_protocol,
         GLOBAL_WS_PROTOCOL=global_ws_protocol,
@@ -941,28 +1180,37 @@ def main():
         COMPOSE_PROFILES="no-ssl" if not ssl_files_given else "ssl",
         SSL_CERT_PUBLIC_KEY=str(fullchain_file) if fullchain_file else "dummyfile",
         SSL_CERT_PRIVATE_KEY=str(privkey_file) if privkey_file else "dummyfile",
-        FRONTEND_IMAGE=frontend_image,
-        DISABLE_AUTOMATIC_COHORT_PERMISSION_METRICS="true" if not automatic_metrics_permission_enabled else "false",
-        DISABLE_AUTOMATIC_COHORT_PERMISSION_STATISTICS="true" if not automatic_statistics_permission_enabled else "false",
-        DISABLE_AUTOMATIC_COHORT_PERMISSION_LEARNING="true" if not automatic_learning_permission_enabled else "false",
-        COHORT_PERMISSION_ENABLED="true" if cohort_permission_enabled else "false",
-        COHORT_PERMISSION_QUERY_RETRY_TIME=query_retry_time,
-        COHORT_PERMISSION_IS_ALLOWED_TO_QUERY="true" if is_allowed_to_query else "false",
-        COHORT_PERMISSION_QUERY_SAMPLE_THRESHOLD=query_sample_threshold,
-        COHORT_PERMISSION_GLOBAL_USER_ID=global_user_id,
-        COHORT_PERMISSION_AUTO_TRAINING_ACCESS=auto_learning_access,
-        COHORT_PERMISSION_AUTO_STATISTICS_ACCESS=auto_statistics_access,
-        COHORT_PERMISSION_AUTO_METRICS_ACCESS=auto_metrics_access,
+        FRONTEND_IMAGE=config["frontend_image"],
+        DISABLE_AUTOMATIC_COHORT_PERMISSION_METRICS="true" if not config["automatic_metrics_permission_enabled"] else "false",
+        DISABLE_AUTOMATIC_COHORT_PERMISSION_STATISTICS="true" if not config["automatic_statistics_permission_enabled"] else "false",
+        DISABLE_AUTOMATIC_COHORT_PERMISSION_LEARNING="true" if not config["automatic_learning_permission_enabled"] else "false",
+        COHORT_PERMISSION_ENABLED="true" if config["cohort_permission_enabled"] else "false",
+        COHORT_PERMISSION_QUERY_RETRY_TIME=config["query_retry_time"],
+        COHORT_PERMISSION_IS_ALLOWED_TO_QUERY="true" if config["is_allowed_to_query"] else "false",
+        COHORT_PERMISSION_QUERY_SAMPLE_THRESHOLD=config["query_sample_threshold"],
+        COHORT_PERMISSION_GLOBAL_USER_ID=config["global_user_id"],
+        COHORT_PERMISSION_AUTO_TRAINING_ACCESS=config["auto_learning_access"],
+        COHORT_PERMISSION_AUTO_STATISTICS_ACCESS=config["auto_statistics_access"],
+        COHORT_PERMISSION_AUTO_METRICS_ACCESS=config["auto_metrics_access"],
         GLOBAL_KEYCLOAK_URL=global_keycloak_url,
-        GLOBAL_KEYCLOAK_ENABLED="true" if auth_enabled else "false",
-    ):
-        sys.exit(1)
-    # ========================================================================
-    # 6. Installation Summary
-    # ========================================================================
+        GLOBAL_KEYCLOAK_ENABLED="true" if config["auth_enabled"] else "false",
+    )
+
+
+# ============================================================================
+# Final summary / instructions
+# ============================================================================
+
+def print_summary(mode: str, config: dict) -> None:
+    """Prints (and saves) the mode-aware closing instructions."""
+    domain_obj = config["domain_obj"]
+    deployed_on_address = str(domain_obj) if domain_obj is not None else (
+        f"http://{config['exposed_address']}" + (f":{config['client_port']}" if config['client_port'] != "80" else "")
+    )
+
     self_signed_startup_instructions = ""
     additional_instructions = ""
-    if use_self_signed_certs:
+    if config["use_self_signed_certs"]:
         self_signed_startup_instructions = (
             "\nBefore starting, you MUST generate your self-signed certificates:\n"
             f"  python3 {BASE_DIR_INSTALLER_SCRIPT / 'create_self_signed_certs.py'}\n"
@@ -985,23 +1233,45 @@ def main():
             "Change 'listen 443 ssl;' to 'listen 443 ssl default_server;'"
         )
 
+    if mode == MODE_FORCE_CLEAN:
+        startup_command_block = (
+            "You forced a clean start, so your secrets have changed and your old data is no longer compatible.\n"
+            "To apply this:\n\n"
+            f"cd {FLNET_CLIENT_DIR}\n"
+            "docker compose down -v\n"
+            "docker compose up -d\n"
+            "\nWARNING: 'down -v' permanently deletes all existing data (users, cohorts, learning results, everything).\n"
+        )
+    elif mode == MODE_RECONFIGURE:
+        startup_command_block = (
+            "You reconfigured an existing deployment. Your secrets and data were preserved, so simply:\n\n"
+            f"cd {FLNET_CLIENT_DIR}\n"
+            "docker compose up -d\n"
+            "\nDo NOT run 'docker compose down -v' here - it isn't needed and would destroy your existing data.\n"
+        )
+    else:
+        startup_command_block = (
+            "The FL-Net Client is not started yet. To start it, please do the following:\n\n"
+            f"cd {FLNET_CLIENT_DIR}\n"
+            "docker compose up -d\n"
+        )
+
+    if mode == MODE_RECONFIGURE:
+        first_login_instructions = (
+            "Your existing Keycloak users and admin password were preserved, so no first-login steps are needed.\n"
+        )
+    else:
+        first_login_instructions = (
+            "After starting, you need to perform the further setup steps.\n"
+            "Please refer to the relevant documentation:\n"
+            "https://federated-learning.net/documentation/docs/deployment/deploy-client\n"
+        )
+
     client_startup_instructions = (
-        "The FL-Net Client is not started yet. To start it, please do the following:\n\n"
-        f"cd {FLNET_CLIENT_DIR}\n"
-        "docker compose up -d\n"
+        f"{startup_command_block}"
         f"{self_signed_startup_instructions}\n"
         f"{additional_instructions}\n"
-        "After starting, you need to perform the following steps to finalize the setup:\n"
-        f"1. Access the Keycloak admin console at {deployed_on_address}/auth/\n"
-        "2. Find the temporary admin credentials in FLNet_client/env/keycloak-secrets.env\n"
-        "3. Change the admin password immediately after logging in.\n"
-        "  If you have problems with the manage account page, please add + to the Web Origins of the account-console client in the master realm.\n"
-        "4. Change to the 'FL-Net-Client' realm in Keycloak.\n"
-        "5. Create a user there. Give him the appropiate group (e.g. 'Admin'). Users without a Group cannot access the FL-Net Client!\n"
-        "6. If you want to have automatic updates: All containers are set with a watchtower label. You can simply add a watchtower contaner to the docker compose file.\n"
-        "  More information: https://github.com/containrrr/watchtower\n"
-        "For more information, please refer to the deployment documentation:\n"
-        "https://federated-learning.net/documentation/docs/client-deployment-usage/deploy-client\n"
+        f"{first_login_instructions}"
     )
 
     client_startup_instructions_file = BASE_DIR_INSTALLER_SCRIPT / 'client_startup_instructions.txt'
@@ -1010,6 +1280,31 @@ def main():
     print("⚠️")
     print(client_startup_instructions)
     print(f"A copy of these startup instructions was written to {client_startup_instructions_file}.")
+
+
+# ============================================================================
+# Main Installation Logic
+# ============================================================================
+
+def main():
+    """Main installation/initialization workflow."""
+    print("Starting the initialization of a FL-Net Client...\n")
+
+    mode = determine_mode()
+    defaults = read_existing_config() if mode == MODE_RECONFIGURE else {}
+
+    config = collect_configuration(defaults, mode)
+
+    print("\nHandling secrets...\n")
+    secret_values = read_existing_secrets() if mode == MODE_RECONFIGURE else generate_secrets()
+    if mode == MODE_RECONFIGURE:
+        print("Reusing existing secrets in FLNet_client/env/ — not regenerating.")
+    else:
+        print("Securely generating database secrets...")
+    write_secret_files(FLNET_CLIENT_SECRETS_ENV_DIR, secret_values, config["username"], config["password"])
+
+    build_and_write_env(config)
+    print_summary(mode, config)
 
 if __name__ == '__main__':
     try:
