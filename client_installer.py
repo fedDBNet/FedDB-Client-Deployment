@@ -20,6 +20,7 @@ DEFAULT_PLATFORM_ADDRESS = "federated-learning.net"
 DEFAULT_PLATFORM_PROTOCOL = "https"
 DEFAULT_FULL_GLOBAL_ADDRESS = f"{DEFAULT_PLATFORM_PROTOCOL}://{DEFAULT_PLATFORM_ADDRESS}"
 DEFAULT_PLATFORM_TCP_PORT = "9152"
+DEFAULT_COMPOSE_PROJECT_NAME = "flnet"
 IMAGE_TAG = "latest"
 GLOBAL_DOMAIN_TO_IMAGE = {
     "https://federated-learning.net": f"gitlab.cosy.bio:5050/cosybio/federated-learning/federated_db/frontend-shared/local-fl-net:{IMAGE_TAG}",
@@ -413,6 +414,7 @@ def main():
     global_tcp_port = None
     federated_learning_enabled = True
     auth_enabled = True
+    frontend_image = DEFAULT_FRONTEND_IMAGE
     # ========================================================================
     # 0. Preconfiguration: Network and federation setup
     # vars: global_domain_obj, global_tcp_port, federated_learning_enabled,
@@ -452,9 +454,9 @@ def main():
             config = PREDEFINED_NETWORKS[input_predefined_config]
             global_domain_obj = Domain(config.global_domain)
             global_tcp_port = config.global_tcp_port
-            auth_enabled = GLOBAL_DOMAIN_TO_AUTH_ENABLED_INFO.get(config.global_domain, True)
+            auth_enabled = config.auth_enabled
+            frontend_image = config.frontend_image
             print(f"Joining the '{config.name}' network at '{config.global_domain}' (TCP port {config.global_tcp_port}).")
-            print(f"The installer will use the predefined frontend image '{config.frontend_image}'.")
 
         elif input_preconfiguration == "2":
             print("You chose to join your own self-deployed network.")
@@ -484,6 +486,12 @@ def main():
                     break
                 else:
                     print(f"The port '{global_tcp_port}' is not valid. Please enter a number between 1 and 65535.")
+
+            auth_enabled = ask_yes_no(
+                "Is authentication of your Client to the  Platform enabled on your self-deployed platform?",
+                default=True
+            )
+            frontend_image = GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), DEFAULT_FRONTEND_IMAGE)
 
         # Step B: Federation participation (join and own only)
         print()
@@ -602,7 +610,7 @@ def main():
 
     # ========================================================================
     # 1. Which interface to listen on?
-    # vars: exposed_address, client_port
+    # vars: exposed_address
     # ========================================================================
     print("A FL-Net Client is accessed via the browser.")
     print("You can either only expose the client to this machine (localhost), or expose it to the internet/intranet.")
@@ -620,21 +628,6 @@ def main():
         # Keep IP address for docker binding (docker doesn't understand 'localhost')
         exposed_ip_address = "127.0.0.1" if exposed_address == "localhost" else exposed_address
         break
-
-    # which port?
-    while True:
-        if exposed_address == "localhost" or exposed_address == "127.0.0.1":
-            client_port_input = input(f"Please specify the port that the FL-Net Client should listen on (default is 80): ").strip()
-            client_port = client_port_input or "80"
-        else:
-            client_port_input = input(f"Please specify the port that the FL-Net Client should listen on (default is 443): ").strip()
-            client_port = client_port_input or "443"
-        if validate_port(client_port):
-            break
-        else:
-            print(f"The port '{client_port}' is not valid. Please enter a number between 1 and 65535.")
-    print(f"Exposing the FL-Net Client to {exposed_address}:{client_port}.\n")
-    print()
 
     # ========================================================================
     # 2. Domain configuration including SSL
@@ -740,6 +733,22 @@ def main():
             print("Please enter '1' or '2'.")
             continue
 
+    # which port?
+    # If we terminate SSL we take the given port from the domain, in the other case
+    # the user does SSL termination and therefore will listen on the domain_obj port with something
+    # else just use 8250, some whatever default port
+    default_client_port = domain_obj.port() if domain_obj is not None and ssl_files_given else "8250"
+    assert default_client_port is not None, "Default client port should be set at this point. Script error."
+    while True:
+        client_port_input = input(f"Please specify the port that the FL-Net Client should listen on (default is {default_client_port}): ").strip()
+        client_port = client_port_input or default_client_port
+        if validate_port(client_port):
+            break
+        else:
+            print(f"The port '{client_port}' is not valid. Please enter a number between 1 and 65535.")
+    print(f"Exposing the FL-Net Client to {exposed_address}:{client_port}.\n")
+    print()
+
     # Final warnings for potential misconfigurations
     # Warning 0: Using a domain without SSL encryption
     if domain_obj is not None and domain_obj.protocol() != 'https':
@@ -802,8 +811,6 @@ def main():
         input("Press Enter to continue...")
         print()
 
-
-
     # Warning 4: Port mismatch between domain and client
     if domain_obj is not None:
         if domain_obj.port() != client_port:
@@ -821,23 +828,6 @@ def main():
     # 3. Generate Secrets
     # ========================================================================
     print("Securely generating database secrets...\n")
-    # --- dataimport-secrets ---
-    importer_db_password = gen_secret()
-    importer_db_root_password = gen_secret()
-    importer_secret_key = gen_secret()
-    importer_api_client_secret = gen_secret()
-
-    dataimport_secrets_file = FLNET_CLIENT_ENV_DIR / 'dataimport-secrets.env'
-    if not write_env_file(
-        dataimport_secrets_file,
-        skip_when_exists=False,
-        MYSQL_PASSWORD=importer_db_password,
-        MYSQL_ROOT_PASSWORD=importer_db_root_password,
-        SQL_PASSWORD=importer_db_password,
-        KEYCLOAK_CLIENT_SECRET_KEY=importer_api_client_secret,
-        SECRET_KEY=importer_secret_key,
-    ):
-        sys.exit(1)
 
     # --- orch-secrets ---
     orch_db_password = gen_secret()
@@ -884,7 +874,6 @@ def main():
         KC_DB_PASSWORD=keycloak_db_password,
         KC_BOOTSTRAP_ADMIN_PASSWORD=keycloak_bootstrap_admin_password,
         LOCAL_LEARNING_SECRET=learning_api_client_secret,
-        DATA_IMPORTER_SECRET=importer_api_client_secret,
     ):
         sys.exit(1)
 
@@ -937,6 +926,7 @@ def main():
             'DEPLOYED_ON_ADDRESS': 'WARNING: Changing DEPLOYED_ON_ADDRESS or DEPLOYED_ON_DOMAIN here will NOT update the nginx server_name. Re-run the installer to regenerate nginx.conf with the new domain.',
         },
         skip_when_exists=False,
+        COMPOSE_PROJECT_NAME=DEFAULT_COMPOSE_PROJECT_NAME,
         EXPOSED_IP_ADDRESS=exposed_ip_address,
             # IP address for docker binding (docker doesn't understand 'localhost')
         EXPOSED_PORT=client_port,
@@ -951,13 +941,13 @@ def main():
         COMPOSE_PROFILES="no-ssl" if not ssl_files_given else "ssl",
         SSL_CERT_PUBLIC_KEY=str(fullchain_file) if fullchain_file else "dummyfile",
         SSL_CERT_PRIVATE_KEY=str(privkey_file) if privkey_file else "dummyfile",
-        FRONTEND_IMAGE=GLOBAL_DOMAIN_TO_IMAGE.get(str(global_domain_obj), DEFAULT_FRONTEND_IMAGE),
-        DISABLE_AUTOMATIC_COHORT_PERMISSION_METRICS=not automatic_metrics_permission_enabled,
-        DISABLE_AUTOMATIC_COHORT_PERMISSION_STATISTICS=not automatic_statistics_permission_enabled,
-        DISABLE_AUTOMATIC_COHORT_PERMISSION_LEARNING=not automatic_learning_permission_enabled,
-        COHORT_PERMISSION_ENABLED=cohort_permission_enabled,
+        FRONTEND_IMAGE=frontend_image,
+        DISABLE_AUTOMATIC_COHORT_PERMISSION_METRICS="true" if not automatic_metrics_permission_enabled else "false",
+        DISABLE_AUTOMATIC_COHORT_PERMISSION_STATISTICS="true" if not automatic_statistics_permission_enabled else "false",
+        DISABLE_AUTOMATIC_COHORT_PERMISSION_LEARNING="true" if not automatic_learning_permission_enabled else "false",
+        COHORT_PERMISSION_ENABLED="true" if cohort_permission_enabled else "false",
         COHORT_PERMISSION_QUERY_RETRY_TIME=query_retry_time,
-        COHORT_PERMISSION_IS_ALLOWED_TO_QUERY=is_allowed_to_query,
+        COHORT_PERMISSION_IS_ALLOWED_TO_QUERY="true" if is_allowed_to_query else "false",
         COHORT_PERMISSION_QUERY_SAMPLE_THRESHOLD=query_sample_threshold,
         COHORT_PERMISSION_GLOBAL_USER_ID=global_user_id,
         COHORT_PERMISSION_AUTO_TRAINING_ACCESS=auto_learning_access,
