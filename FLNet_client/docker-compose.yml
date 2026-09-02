@@ -86,6 +86,7 @@ services:
     - FLNET_COHORT_PERMISSION_AUTO_METRICS_ACCESS=${COHORT_PERMISSION_AUTO_METRICS_ACCESS:-NONE}
     - QUARKUS_OIDC_CLIENT_ENABLED=${GLOBAL_KEYCLOAK_ENABLED}
     - QUARKUS_OIDC_CLIENT_GLOBAL_WEBSOCKET_AUTH_SERVER_URL=${GLOBAL_KEYCLOAK_URL}
+    # OIDC Client credentials are in the secrets env file
     depends_on:
       local-learning-api-db:
         condition: service_healthy
