@@ -579,8 +579,8 @@ def write_secret_files(env_dir: Path, secret_values: dict, platform_username: st
         QUARKUS_DATASOURCE_PASSWORD=learning_db_password,
         QUARKUS_OIDC_CREDENTIALS_SECRET=learning_api_client_secret,
         QUARKUS_KEYCLOAK_ADMIN_CLIENT_CLIENT_SECRET=learning_api_client_secret,
-        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_USERNAME=platform_username,
-        QUARKUS_OIDC_CLIENT_GRANT_OPTIONS_PASSWORD_PASSWORD=platform_password,
+        FLNET_GLOBAL_AUTH_USERNAME=platform_username,
+        FLNET_GLOBAL_AUTH_PASSWORD=platform_password,
       # see env/local-learning-secrets.env
     )
 
