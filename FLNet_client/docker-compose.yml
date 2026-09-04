@@ -11,7 +11,6 @@ services:
       - QUARKUS_HTTP_CORS_ORIGINS=${DEPLOYED_ON_ADDRESS}
       - QUARKUS_DATASOURCE_JDBC_URL=jdbc:postgresql://orch-api-db:5432/local-learning-management
       - QUARKUS_DATASOURCE_USERNAME=user
-      - CONTAINER_NETWORK_NAMES=${COMPOSE_PROJECT_NAME}_local-learning-network
       - CONTAINER_FILE_TRANSFER_VOLUME_NAME=${COMPOSE_PROJECT_NAME}_orch-data
       - CONTAINER_FILE_TRANSFER_VOLUME_PATH=/mnt/input
       - CONTAINER_NETWORK_PARTICIPANTS=flnet-local-learning-api,flnet-controller
