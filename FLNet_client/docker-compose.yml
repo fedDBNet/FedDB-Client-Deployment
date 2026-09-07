@@ -13,7 +13,8 @@ services:
       - QUARKUS_DATASOURCE_USERNAME=user
       - CONTAINER_FILE_TRANSFER_VOLUME_NAME=${COMPOSE_PROJECT_NAME}_orch-data
       - CONTAINER_FILE_TRANSFER_VOLUME_PATH=/mnt/input
-      - CONTAINER_NETWORK_PARTICIPANTS=flnet-local-learning-api,flnet-controller
+      - CONTAINER_NETWORK_PARTICIPANTS=flnet-local-learning-api
+      - CONTAINER_NETWORK_FEDERATED_LEARNING_PARTICIPANTS=flnet-controller
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - orch-data-volume:/mnt/input:rw
